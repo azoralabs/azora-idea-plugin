@@ -31,7 +31,7 @@ import javax.swing.Icon
  *
  * Provides an outline panel showing top-level declarations:
  * package, imports, functions, views, packs, enums, slots, fail sets,
- * scopes, impls, solos, wraps, tests, specs, bridges, and hooks.
+ * zones, impls, solos, wraps, tests, specs, bridges, and hooks.
  *
  * Since the plugin uses a flat token-based PSI (no full AST), the
  * structure is extracted by scanning source text for declaration patterns.
@@ -211,10 +211,10 @@ private fun extractDeclarations(text: String, psiFile: PsiFile): List<AzoraDecla
                 result.add(AzoraDeclarationElement(psiFile, "fail $name", AllIcons.Nodes.ExceptionClass, children))
             }
 
-            // Scope
-            matchesDeclPattern(trimmed, "scope") -> {
-                val name = extractDeclName(trimmed, "scope")
-                result.add(AzoraDeclarationElement(psiFile, "scope $name", AllIcons.Nodes.Package))
+            // Zone
+            matchesDeclPattern(trimmed, "zone") -> {
+                val name = extractDeclName(trimmed, "zone")
+                result.add(AzoraDeclarationElement(psiFile, "zone $name", AllIcons.Nodes.Package))
             }
 
             // Impl
@@ -322,14 +322,8 @@ private fun extractDeclarations(text: String, psiFile: PsiFile): List<AzoraDecla
  * @return `true` if the line declares a symbol of the given kind.
  */
 private fun matchesDeclPattern(trimmed: String, keyword: String): Boolean {
-    if (trimmed.startsWith("$keyword ") || trimmed.startsWith("$keyword<")) return true
-    // Handle modifiers before the keyword: expose, confine, inline, etc.
-    val modifiers = listOf("expose ", "confine ", "inline ")
-    for (mod in modifiers) {
-        if (trimmed.startsWith(mod) && (trimmed.removePrefix(mod).trimStart().startsWith("$keyword ") ||
-                    trimmed.removePrefix(mod).trimStart().startsWith("$keyword<"))) return true
-    }
-    return false
+    val core = stripLeadingModifiers(trimmed)
+    return core.startsWith("$keyword ") || core.startsWith("$keyword<")
 }
 
 /**
@@ -342,7 +336,9 @@ private fun matchesDeclPattern(trimmed: String, keyword: String): Boolean {
  * @return the extracted name, trimmed of surrounding delimiters.
  */
 private fun extractDeclName(trimmed: String, keyword: String): String {
-    val afterKeyword = trimmed.substringAfter("$keyword ").substringAfter("$keyword<")
+    val core = stripLeadingModifiers(trimmed)
+    val afterKeyword = core.substringAfter("$keyword ").substringAfter("$keyword<")
+    if (keyword == "zone") return afterKeyword.substringBefore("{").substringBefore(" ").trim()
     // Name is everything up to ( { < : or end of line
     return afterKeyword.substringBefore("(").substringBefore("{").substringBefore("<")
         .substringBefore(":").substringBefore(" ").trim()
@@ -355,13 +351,8 @@ private fun extractDeclName(trimmed: String, keyword: String): String {
  * @return `true` if the line starts a `func` declaration.
  */
 private fun isFuncDeclaration(trimmed: String): Boolean {
-    if (trimmed.startsWith("func ") || trimmed.startsWith("func<")) return true
-    val modifiers = listOf("expose ", "confine ", "inline ", "expose func", "confine func")
-    for (mod in modifiers) {
-        val rest = trimmed.removePrefix(mod).trimStart()
-        if (rest.startsWith("func ") || rest.startsWith("func<")) return true
-    }
-    return false
+    val core = stripLeadingModifiers(trimmed)
+    return core.startsWith("func ") || core.startsWith("func<")
 }
 
 /**
@@ -373,12 +364,28 @@ private fun isFuncDeclaration(trimmed: String): Boolean {
  * @return the extracted function name.
  */
 private fun extractFuncName(trimmed: String): String {
-    val afterFunc = if (trimmed.contains("func<")) {
-        trimmed.substringAfter("func<").substringAfter("> ").substringAfter(">")
+    val core = stripLeadingModifiers(trimmed)
+    val afterFunc = if (core.contains("func<")) {
+        core.substringAfter("func<").substringAfter("> ").substringAfter(">")
     } else {
-        trimmed.substringAfter("func ")
+        core.substringAfter("func ")
     }
     return afterFunc.substringBefore("(").substringBefore("{").substringBefore(":").trim()
+}
+
+private fun stripLeadingModifiers(trimmed: String): String {
+    var s = trimmed
+    var changed: Boolean
+    do {
+        changed = false
+        for (modifier in listOf("expose ", "confine ", "protect ", "friend ", "inline ", "deepinline ", "noinline ", "unsafe ", "threadlocal ")) {
+            if (s.startsWith(modifier)) {
+                s = s.removePrefix(modifier).trimStart()
+                changed = true
+            }
+        }
+    } while (changed)
+    return s
 }
 
 /**

@@ -17,6 +17,7 @@
 package com.azora.lang.idea.completion
 
 import com.azora.lang.idea.AzoraLanguage
+import com.azora.lang.idea.AzoraLanguageFacts
 import com.azora.lang.idea.symbol.*
 import com.intellij.codeInsight.completion.*
 import com.intellij.codeInsight.lookup.LookupElementBuilder
@@ -75,7 +76,8 @@ class AzoraCompletionContributor : CompletionContributor() {
             val file = parameters.originalFile
             val filePath = file.virtualFile?.path ?: file.name
 
-            // --- 1. Keyword completions ---
+            // --- 1. Keyword and annotation completions ---
+            addAnnotationCompletions(source, offset, result)
             addKeywordCompletions(source, offset, result)
 
             // --- 2. Context-aware symbol completions ---
@@ -91,42 +93,42 @@ class AzoraCompletionContributor : CompletionContributor() {
                 }
 
                 // After "use " -- suggest modules from project files
-                prefix == "use " || (prefix.startsWith("use ") && !prefix.contains("{")) -> {
-                    addUseCompletions(symbolService, filePath, source, project, result)
+                prefix == "use " || prefix.startsWith("use ") -> {
+                    addUseCompletions(symbolService, filePath, source, project, prefix, result)
                 }
 
-                // After "fail ." -- suggest fail variants from context
+                // After "fail ." or "fail return ." -- suggest fail variants from context
                 prefix.matches(Regex(".*fail\\s+\\.\\s*$")) ||
-                prefix.matches(Regex(".*return\\s+fail\\s+\\.\\s*$")) -> {
-                    addFailVariantCompletions(symbolService, filePath, source, result)
+                prefix.matches(Regex(".*fail\\s+return\\s+\\.\\s*$")) -> {
+                    addFailVariantCompletions(symbolService, filePath, source, project, result)
                 }
 
                 // Dot completion: <identifier>.
                 isDotCompletion(prefix) -> {
                     val receiver = extractReceiverBeforeDot(prefix)
-                    addDotCompletions(receiver, symbolService, filePath, source, result)
+                    addDotCompletions(receiver, symbolService, filePath, source, project, offset, result)
                 }
 
                 // Scope access: <scope>::
                 isScopeAccess(prefix) -> {
                     val scopePath = extractScopePathBeforeColonColon(prefix)
-                    addScopeAccessCompletions(scopePath, symbolService, filePath, source, result)
+                    addScopeAccessCompletions(scopePath, symbolService, filePath, source, project, result)
                 }
 
                 // After "(" on a pack name -- suggest named arguments
                 isPackConstructorArgs(prefix) -> {
                     val packName = extractPackNameBeforeParen(prefix)
-                    addPackFieldCompletions(packName, symbolService, filePath, source, result)
+                    addPackFieldCompletions(packName, symbolService, filePath, source, project, result)
                 }
 
                 // Inside when body: ".Variant" or "is .Variant"
                 isWhenVariantCompletion(prefix) -> {
-                    addAllVariantCompletions(symbolService, filePath, source, result)
+                    addAllVariantCompletions(symbolService, filePath, source, project, result)
                 }
 
                 // General context: suggest all visible symbols
                 else -> {
-                    addGeneralCompletions(symbolService, filePath, source, result)
+                    addGeneralCompletions(symbolService, filePath, source, project, offset, result)
                 }
             }
 
@@ -159,6 +161,27 @@ class AzoraCompletionContributor : CompletionContributor() {
                             .withIcon(AllIcons.Nodes.Annotationtype)
                             .withTypeText("keyword", true)
                             .bold()
+                    )
+                }
+            }
+        }
+
+        private fun addAnnotationCompletions(source: String, offset: Int, result: CompletionResultSet) {
+            val lineStart = findLineStart(source, offset)
+            val prefix = source.substring(lineStart, offset)
+            val atIndex = prefix.lastIndexOf('@')
+            if (atIndex < 0) return
+            val typed = prefix.substring(atIndex + 1)
+            if (typed.any { !(it.isLetterOrDigit() || it == '_') }) return
+
+            for (annotation in AzoraLanguageFacts.builtinAnnotations) {
+                if (annotation.name.startsWith(typed)) {
+                    result.addElement(
+                        LookupElementBuilder.create(annotation.insertText.removePrefix("@"))
+                            .withPresentableText("@${annotation.name}")
+                            .withIcon(AllIcons.Nodes.Annotationtype)
+                            .withTypeText("builtin annotation", true)
+                            .withTailText("  ${annotation.description}", true)
                     )
                 }
             }
@@ -206,15 +229,18 @@ class AzoraCompletionContributor : CompletionContributor() {
             filePath: String,
             source: String,
             project: Project,
+            importPrefix: String,
             result: CompletionResultSet
         ) {
-            val allSymbols = symbolService.getAllVisibleSymbols(filePath, source)
+            addStdImportCompletions(importPrefix, result)
+
+            val allSymbols = symbolService.getAllVisibleSymbols(project, filePath, source)
             val scopes = allSymbols.filter { it.kind == SymbolKind.SCOPE }
             for (scope in scopes) {
                 result.addElement(
-                    LookupElementBuilder.create("scope ${scope.name}")
+                    LookupElementBuilder.create(scope.name)
                         .withIcon(AllIcons.Nodes.Package)
-                        .withTypeText("scope", true)
+                        .withTypeText("zone", true)
                 )
             }
 
@@ -232,6 +258,49 @@ class AzoraCompletionContributor : CompletionContributor() {
             val baseDir = project.basePath
             if (baseDir != null) {
                 scanForAzModules(baseDir, result)
+            }
+        }
+
+        private fun addStdImportCompletions(importPrefix: String, result: CompletionResultSet) {
+            val groupedPrefix = Regex("""std\.\{([^}]*)$""").find(importPrefix)?.groupValues?.get(1)
+            if (groupedPrefix != null) {
+                val typed = groupedPrefix.substringAfterLast(",").trim()
+                for ((alias, module) in AzoraLanguageFacts.stdAliases) {
+                    if (alias.startsWith(typed)) {
+                        result.addElement(
+                            LookupElementBuilder.create(alias)
+                                .withIcon(AllIcons.Nodes.Package)
+                                .withTypeText(module, true)
+                        )
+                    }
+                }
+                return
+            }
+
+            val normalizedPrefix = importPrefix.substringAfter("use ").trim()
+            for (module in AzoraLanguageFacts.stdModules) {
+                if (module.startsWith(normalizedPrefix) || normalizedPrefix.isBlank()) {
+                    result.addElement(
+                        LookupElementBuilder.create(module)
+                            .withIcon(AllIcons.Nodes.Package)
+                            .withTypeText("stdlib module", true)
+                    )
+                }
+            }
+
+            if ("std.{math, concurrency}".startsWith(normalizedPrefix) || normalizedPrefix.isBlank()) {
+                result.addElement(
+                    LookupElementBuilder.create("std.{math, concurrency}")
+                        .withIcon(AllIcons.Nodes.Package)
+                        .withTypeText("grouped import", true)
+                )
+            }
+            if ("std::*".startsWith(normalizedPrefix) || normalizedPrefix.isBlank()) {
+                result.addElement(
+                    LookupElementBuilder.create("std::*")
+                        .withIcon(AllIcons.Nodes.Package)
+                        .withTypeText("wildcard import", true)
+                )
             }
         }
 
@@ -254,7 +323,7 @@ class AzoraCompletionContributor : CompletionContributor() {
                     .forEach { file ->
                         val relativePath = file.relativeTo(baseDirFile).path
                             .removeSuffix(".az")
-                            .replace(java.io.File.separatorChar, '.')
+                            .replace(java.io.File.separatorChar.toString(), ".")
                         result.addElement(
                             LookupElementBuilder.create(relativePath)
                                 .withIcon(AllIcons.Nodes.Package)
@@ -285,20 +354,32 @@ class AzoraCompletionContributor : CompletionContributor() {
             symbolService: AzoraSymbolService,
             filePath: String,
             source: String,
+            project: Project,
+            offset: Int,
             result: CompletionResultSet
         ) {
-            val allSymbols = symbolService.getAllVisibleSymbols(filePath, source)
+            val allSymbols = symbolService.getAllVisibleSymbols(project, filePath, source)
 
-            val typeMembers = symbolService.getMembersForType(receiver, filePath, source)
+            val typeMembers = symbolService.getMembersForType(receiver, filePath, source, project)
             for (member in typeMembers) {
                 result.addElement(buildSymbolLookup(member))
             }
 
-            val varType = symbolService.resolveVariableType(receiver, filePath, source)
+            val localType = resolveLocalVariableType(receiver, source, offset)
+            val varType = localType ?: symbolService.resolveVariableType(receiver, filePath, source, project)
             if (varType != null) {
-                val varTypeMembers = symbolService.getMembersForType(varType, filePath, source)
+                val varTypeMembers = symbolService.getMembersForType(varType.substringBefore("<"), filePath, source, project)
                 for (member in varTypeMembers) {
                     result.addElement(buildSymbolLookup(member))
+                }
+            }
+
+            if (receiver == "self") {
+                val selfType = resolveEnclosingSelfType(source, offset)
+                if (selfType != null) {
+                    for (member in symbolService.getMembersForType(selfType, filePath, source, project)) {
+                        result.addElement(buildSymbolLookup(member))
+                    }
                 }
             }
 
@@ -339,9 +420,10 @@ class AzoraCompletionContributor : CompletionContributor() {
             symbolService: AzoraSymbolService,
             filePath: String,
             source: String,
+            project: Project,
             result: CompletionResultSet
         ) {
-            val members = symbolService.resolveScopePath(scopePath, filePath, source)
+            val members = symbolService.resolveScopePath(scopePath, filePath, source, project)
             for (member in members) {
                 result.addElement(buildSymbolLookup(member))
             }
@@ -367,9 +449,10 @@ class AzoraCompletionContributor : CompletionContributor() {
             symbolService: AzoraSymbolService,
             filePath: String,
             source: String,
+            project: Project,
             result: CompletionResultSet
         ) {
-            val allSymbols = symbolService.getAllVisibleSymbols(filePath, source)
+            val allSymbols = symbolService.getAllVisibleSymbols(project, filePath, source)
             val packSym = allSymbols.find {
                 it.name == packName && it.kind in setOf(SymbolKind.PACK, SymbolKind.VIEW)
             } ?: return
@@ -402,7 +485,7 @@ class AzoraCompletionContributor : CompletionContributor() {
         // -----------------------------------------------------------------------
 
         /**
-         * Adds completion items for fail variant names after `fail .` or `return fail .`.
+         * Adds completion items for fail variant names after `fail .` or `fail return .`.
          *
          * @param symbolService the project's symbol service.
          * @param filePath the absolute path of the current file.
@@ -413,9 +496,10 @@ class AzoraCompletionContributor : CompletionContributor() {
             symbolService: AzoraSymbolService,
             filePath: String,
             source: String,
+            project: Project,
             result: CompletionResultSet
         ) {
-            val allSymbols = symbolService.getAllVisibleSymbols(filePath, source)
+            val allSymbols = symbolService.getAllVisibleSymbols(project, filePath, source)
             val failTypes = allSymbols.filter { it.kind == SymbolKind.FAIL }
             for (failType in failTypes) {
                 for (variant in failType.members.filter { it.kind == SymbolKind.VARIANT }) {
@@ -446,9 +530,10 @@ class AzoraCompletionContributor : CompletionContributor() {
             symbolService: AzoraSymbolService,
             filePath: String,
             source: String,
+            project: Project,
             result: CompletionResultSet
         ) {
-            val allSymbols = symbolService.getAllVisibleSymbols(filePath, source)
+            val allSymbols = symbolService.getAllVisibleSymbols(project, filePath, source)
             val variantTypes = allSymbols.filter {
                 it.kind in setOf(SymbolKind.ENUM, SymbolKind.FAIL, SymbolKind.SLOT)
             }
@@ -483,9 +568,11 @@ class AzoraCompletionContributor : CompletionContributor() {
             symbolService: AzoraSymbolService,
             filePath: String,
             source: String,
+            project: Project,
+            offset: Int,
             result: CompletionResultSet
         ) {
-            val allSymbols = symbolService.getAllVisibleSymbols(filePath, source)
+            val allSymbols = symbolService.getAllVisibleSymbols(project, filePath, source)
             for (sym in allSymbols) {
                 if (sym.kind in setOf(
                         SymbolKind.FUNC, SymbolKind.VIEW, SymbolKind.PACK,
@@ -496,6 +583,10 @@ class AzoraCompletionContributor : CompletionContributor() {
                 ) {
                     result.addElement(buildSymbolLookup(sym))
                 }
+            }
+
+            for (local in extractLocalBindings(source, offset)) {
+                result.addElement(buildSymbolLookup(local))
             }
         }
 
@@ -514,26 +605,36 @@ class AzoraCompletionContributor : CompletionContributor() {
         private fun addSnippetCompletions(result: CompletionResultSet) {
             val snippets = listOf(
                 Snippet("func", "Function declaration", "func name(param: Type): ReturnType {\n    \n}"),
+                Snippet("task main", "Async entry point", "task main() {\n    fin user = await loadUser()\n    fin posts = await loadPosts()\n    render(user, posts)\n}"),
                 Snippet("view", "View component", "view Name() {\n    rem state = 0\n\n    effect {\n        \n    }\n\n    Column(modifier: Modifier.padding(16)) {\n        \n    }\n}"),
                 Snippet("pack", "Pack (struct) declaration", "pack Name {\n    var field: Type = defaultValue\n}"),
+                Snippet("pack empty", "Empty pack declaration", "pack Name<T>"),
                 Snippet("enum", "Enum declaration", "enum Name {\n    Variant1, Variant2, Variant3\n}"),
                 Snippet("slot", "Slot (tagged union) declaration", "slot Name {\n    Variant1(field: Type),\n    Variant2(field: Type)\n}"),
                 Snippet("fail", "Fail set declaration", "fail ErrorName {\n    Variant1,\n    Variant2\n}"),
+                Snippet("friend zone", "Shared stdlib zone", "friend zone std::module {\n    \n}"),
+                Snippet("zone", "Zone (namespace)", "zone Name {\n    \n}"),
                 Snippet("rem", "Reactive state (rem)", "rem name = initialValue"),
+                Snippet("mem", "Remembered reactive value", "mem name = initialValue"),
+                Snippet("ret", "Retained reactive value", "ret name = initialValue"),
                 Snippet("effect", "Effect block", "effect {\n    \n}"),
                 Snippet("bridge", "Bridge FFI block", "bridge .C {\n    func name(param: Type): ReturnType\n}"),
                 Snippet("impl", "Implementation block", "impl TypeName {\n    \n}"),
-                Snippet("scope", "Scope (namespace)", "scope Name {\n    \n}"),
+                Snippet("impl trait", "Trait implementation", "impl TraitName for TypeName {\n    ref self ->\n    \n}"),
+                Snippet("impl deref", "Deref implementation", "impl deref for TypeName {\n    ref self ->\n    \n}"),
+                Snippet("impl as", "Cast implementation", "impl as TargetType for TypeName {\n    ref self ->\n    \n}"),
                 Snippet("test", "Test block", "test \"description\" {\n    \n}"),
+                Snippet("mixin", "Mixin (string to code)", "mixin \"\""),
                 Snippet("for", "For loop", "for i in 0..n {\n    \n}"),
+                Snippet("loop iterator continue", "Iterator loop continue handler", "loop iterator continue {\n    \n}"),
                 Snippet("when", "When (pattern match)", "when value {\n    is Type -> result\n    else -> default\n}"),
                 Snippet("task", "Async task", "task name(): ReturnType {\n    fin result = await call()\n    return result\n}"),
                 Snippet("flow", "Flow (generator)", "flow name(): Type {\n    yield value\n}"),
                 Snippet("solo", "Singleton declaration", "solo Name {\n    fin field: Type = value\n}"),
                 Snippet("wrap", "DI container", "wrap Name {\n    bind Service = ServiceImpl()\n}"),
-                Snippet("contract", "Function with contracts", "func name(param: Type): ReturnType {\n    in {\n        assert param > 0\n    }\n    out { r ->\n        assert r >= 0\n    }\n    return param\n}"),
+                Snippet("contract", "Function with contracts", "func name(param: Type): ReturnType\nin {\n    assert param > 0 { \"param must be positive\" }\n} out { r ->\n    assert r >= 0 { \"result must be valid\" }\n} zone {\n    return param\n}"),
                 Snippet("spec", "Spec (trait/interface)", "spec Name {\n    func method(): ReturnType\n}"),
-                Snippet("region", "Memory region", "region name {\n    fin buf = alloc [Byte](size)\n    \n    drop buf\n}"),
+                Snippet("zone alloc", "Zone allocation block", "zone scratch {\n    fin ptr = alloc Byte(size)\n    defer { drop ptr }\n}"),
                 Snippet("inline for", "Compile-time for loop", "inline for i in 0..n {\n    \n}"),
                 Snippet("inline if", "Compile-time if", "inline if platform == \"target\" {\n    \n}"),
             )
@@ -615,7 +716,16 @@ class AzoraCompletionContributor : CompletionContributor() {
          */
         private fun extractScopePathBeforeColonColon(prefix: String): List<String> {
             val beforeColons = prefix.dropLast(2).trimEnd()
-            return beforeColons.split("::").map { it.trim() }.filter { it.isNotEmpty() }
+            val pathChars = StringBuilder()
+            for (i in beforeColons.indices.reversed()) {
+                val ch = beforeColons[i]
+                if (ch.isLetterOrDigit() || ch == '_' || ch == ':') {
+                    pathChars.insert(0, ch)
+                } else {
+                    break
+                }
+            }
+            return pathChars.toString().split("::").map { it.trim() }.filter { it.isNotEmpty() }
         }
 
         /**
@@ -632,6 +742,52 @@ class AzoraCompletionContributor : CompletionContributor() {
                 if (ch.isLetterOrDigit() || ch == '_') identChars.insert(0, ch) else break
             }
             return identChars.toString()
+        }
+
+        private fun extractLocalBindings(source: String, offset: Int): List<SymbolInfo> {
+            val beforeCaret = source.take(offset.coerceIn(0, source.length))
+            val result = LinkedHashMap<String, SymbolInfo>()
+            val bindingRegex = Regex("""\b(var|fin|mem|rem|ret)\s+([A-Za-z_$][A-Za-z0-9_$]*)(?:\s*:\s*([^=\n]+))?(?:\s*=\s*([^\n]+))?""")
+            for (match in bindingRegex.findAll(beforeCaret)) {
+                val keyword = match.groupValues[1]
+                val name = match.groupValues[2]
+                val declaredType = match.groupValues.getOrNull(3)?.trim()?.takeIf { it.isNotEmpty() }
+                val initializer = match.groupValues.getOrNull(4)?.trim().orEmpty()
+                val type = declaredType ?: inferTypeFromInitializer(initializer)
+                val kind = if (keyword == "var" || keyword == "mem" || keyword == "rem") SymbolKind.VAR else SymbolKind.FIN
+                result[name] = SymbolInfo(name, kind, type = type, isMutable = kind == SymbolKind.VAR)
+            }
+            return result.values.toList()
+        }
+
+        private fun resolveLocalVariableType(name: String, source: String, offset: Int): String? {
+            return extractLocalBindings(source, offset).lastOrNull { it.name == name }?.type
+        }
+
+        private fun inferTypeFromInitializer(initializer: String): String? {
+            val trimmed = initializer.trim()
+            val ctor = Regex("""^([A-Z][A-Za-z0-9_]*)\s*(?:<[^>]+>)?\s*\(""").find(trimmed)
+            if (ctor != null) return ctor.groupValues[1]
+            return when {
+                trimmed.startsWith("\"") -> "String"
+                trimmed == "true" || trimmed == "false" -> "Bool"
+                trimmed.matches(Regex("""[-+]?\d+""")) -> "Int"
+                trimmed.matches(Regex("""[-+]?\d+\.\d+.*""")) -> "Real"
+                else -> null
+            }
+        }
+
+        private fun resolveEnclosingSelfType(source: String, offset: Int): String? {
+            val beforeCaret = source.take(offset.coerceIn(0, source.length))
+            val impl = Regex("""(?m)^\s*(?:expose\s+|confine\s+|protect\s+|unsafe\s+|inline\s+)*impl(?:\s+[A-Za-z_][A-Za-z0-9_<>,:\s]*\s+for)?\s+([A-Z][A-Za-z0-9_]*)""")
+                .findAll(beforeCaret)
+                .lastOrNull()
+            if (impl != null) return impl.groupValues[1]
+
+            val pack = Regex("""(?m)^\s*(?:expose\s+|confine\s+|protect\s+)*pack\s+([A-Z][A-Za-z0-9_]*)""")
+                .findAll(beforeCaret)
+                .lastOrNull()
+            return pack?.groupValues?.get(1)
         }
 
         // -----------------------------------------------------------------------
@@ -709,30 +865,7 @@ class AzoraCompletionContributor : CompletionContributor() {
 
     companion object {
         /** All Azora keywords used for keyword completion. */
-        private val ALL_KEYWORDS = listOf(
-            // Declaration
-            "var", "fin", "func", "hook", "test", "enum", "slot", "pack", "impl",
-            "infx", "deco", "scope", "package", "use", "typealias", "spec", "type",
-            "let", "prop", "oper", "ctor", "dtor", "solo", "wrap", "bridge",
-            "task", "flow", "fail", "view",
-            // Control
-            "if", "else", "for", "loop", "while", "in", "when", "return",
-            "break", "continue", "as", "is", "try", "catch", "defer",
-            "launch", "async", "await", "suspend", "yield",
-            "flip", "flop", "by", "with", "each", "where",
-            "assert", "trace", "platform",
-            // Modifier
-            "expose", "confine", "inline", "mut", "ref",
-            "isolated", "threadlocal", "lazy", "bind", "inject",
-            // Memory
-            "alloc", "drop", "unsafe", "region",
-            // Reactive
-            "rem", "effect",
-            // Literals
-            "true", "false", "null",
-            // Special
-            "self", "it", "out",
-        )
+        private val ALL_KEYWORDS = AzoraLanguageFacts.allCompletionKeywords
     }
 }
 

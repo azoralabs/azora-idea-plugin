@@ -108,7 +108,7 @@ class AzoraSyntaxHighlighter : SyntaxHighlighterBase() {
         /** Text attributes for modifier keywords (`expose`, `confine`, `mut`, `ref`, etc.). */
         val MODIFIER_KEYWORD = createTextAttributesKey("AZORA_MODIFIER_KEYWORD", DefaultLanguageHighlighterColors.KEYWORD)
 
-        /** Text attributes for memory keywords (`alloc`, `drop`, `unsafe`, `region`). */
+        /** Text attributes for memory keywords (`alloc`, `drop`, `unsafe`, `deref`). */
         val MEMORY_KEYWORD = createTextAttributesKey("AZORA_MEMORY_KEYWORD", DefaultLanguageHighlighterColors.KEYWORD)
 
         /** Text attributes for reactive/UI keywords (`rem`, `effect`, `view`). */

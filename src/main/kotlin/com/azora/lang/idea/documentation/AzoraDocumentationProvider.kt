@@ -17,6 +17,7 @@
 package com.azora.lang.idea.documentation
 
 import com.azora.lang.idea.AzoraTokenTypes
+import com.azora.lang.idea.AzoraLanguageFacts
 import com.azora.lang.idea.symbol.*
 import com.intellij.lang.documentation.AbstractDocumentationProvider
 import com.intellij.psi.PsiElement
@@ -44,6 +45,9 @@ class AzoraDocumentationProvider : AbstractDocumentationProvider() {
     override fun generateDoc(element: PsiElement?, originalElement: PsiElement?): String? {
         val target = element ?: originalElement ?: return null
         val elementType = target.node?.elementType
+        if (elementType == AzoraTokenTypes.DECORATOR) {
+            return renderAnnotationDoc(target.text.removePrefix("@"))
+        }
         if (elementType != AzoraTokenTypes.IDENTIFIER) return null
 
         val name = target.text
@@ -53,7 +57,7 @@ class AzoraDocumentationProvider : AbstractDocumentationProvider() {
         val source = file.text
 
         val symbolService = AzoraSymbolService.getInstance(project)
-        val symbol = findSymbolByName(name, symbolService, filePath, source) ?: return null
+        val symbol = findSymbolByName(name, symbolService, target.project, filePath, source) ?: return null
 
         return renderDocumentation(symbol)
     }
@@ -71,6 +75,10 @@ class AzoraDocumentationProvider : AbstractDocumentationProvider() {
     override fun getQuickNavigateInfo(element: PsiElement?, originalElement: PsiElement?): String? {
         val target = element ?: originalElement ?: return null
         val elementType = target.node?.elementType
+        if (elementType == AzoraTokenTypes.DECORATOR) {
+            val annotation = AzoraLanguageFacts.builtinAnnotations.find { it.name == target.text.removePrefix("@") }
+            return annotation?.description
+        }
         if (elementType != AzoraTokenTypes.IDENTIFIER) return null
 
         val name = target.text
@@ -80,7 +88,7 @@ class AzoraDocumentationProvider : AbstractDocumentationProvider() {
         val source = file.text
 
         val symbolService = AzoraSymbolService.getInstance(project)
-        val symbol = findSymbolByName(name, symbolService, filePath, source) ?: return null
+        val symbol = findSymbolByName(name, symbolService, target.project, filePath, source) ?: return null
 
         return renderQuickInfo(symbol)
     }
@@ -99,10 +107,11 @@ class AzoraDocumentationProvider : AbstractDocumentationProvider() {
     private fun findSymbolByName(
         name: String,
         symbolService: AzoraSymbolService,
+        project: com.intellij.openapi.project.Project,
         filePath: String,
         source: String
     ): SymbolInfo? {
-        val allSymbols = symbolService.getAllVisibleSymbols(filePath, source)
+        val allSymbols = symbolService.getAllVisibleSymbols(project, filePath, source)
 
         // Direct match
         val direct = allSymbols.find { it.name == name }
@@ -154,6 +163,12 @@ class AzoraDocumentationProvider : AbstractDocumentationProvider() {
         }
 
         sb.append("<br/>")
+
+        if (!sym.documentation.isNullOrBlank()) {
+            sb.append("<br/>")
+            sb.append(escapeHtml(sym.documentation).replace("\n", "<br/>"))
+            sb.append("<br/>")
+        }
 
         // Parameters
         if (sym.params.isNotEmpty()) {
@@ -278,7 +293,7 @@ class AzoraDocumentationProvider : AbstractDocumentationProvider() {
         SymbolKind.SLOT -> "slot"
         SymbolKind.FUNC -> "func"
         SymbolKind.VIEW -> "view"
-        SymbolKind.SCOPE -> "scope"
+        SymbolKind.SCOPE -> "zone"
         SymbolKind.SOLO -> "solo"
         SymbolKind.WRAP -> "wrap"
         SymbolKind.VAR -> "var"
@@ -318,5 +333,16 @@ class AzoraDocumentationProvider : AbstractDocumentationProvider() {
             .replace("<", "&lt;")
             .replace(">", "&gt;")
             .replace("\"", "&quot;")
+    }
+
+    private fun renderAnnotationDoc(name: String): String? {
+        val annotation = AzoraLanguageFacts.builtinAnnotations.find { it.name == name } ?: return null
+        return """
+            <html><body>
+            <b>annotation</b> <code>@${escapeHtml(annotation.name)}</code><br/>
+            <br/>${escapeHtml(annotation.description)}<br/>
+            <br/><code>${escapeHtml(annotation.insertText)}</code>
+            </body></html>
+        """.trimIndent()
     }
 }

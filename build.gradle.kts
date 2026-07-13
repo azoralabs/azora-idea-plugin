@@ -5,7 +5,7 @@ plugins {
 }
 
 group = "com.azora.lang"
-version = "0.0.1"
+version = "0.0.3"
 
 repositories {
     mavenCentral()
@@ -43,13 +43,11 @@ intellijPlatform {
         }
         changeNotes = """
             <ul>
-                <li>Initial release</li>
-                <li>Syntax highlighting with semantic keyword coloring</li>
-                <li>Code completion for keywords, symbols, and snippets</li>
-                <li>Go-to-definition and quick documentation</li>
-                <li>Error detection, brace matching, and code folding</li>
-                <li>Structure view, find usages, and run configurations</li>
-                <li>New Project wizard with Azora SDK configuration</li>
+                <li>Updated syntax support for Azora 0.0.3.</li>
+                <li>Context-aware keyword highlighting for soft keywords.</li>
+                <li>Completion for std modules, grouped imports, annotations, fields, local bindings, and snippets.</li>
+                <li>Project-aware go-to-definition and hover documentation.</li>
+                <li>Zone, task, flow, deref, contracts, and reactive keyword support.</li>
             </ul>
         """.trimIndent()
     }

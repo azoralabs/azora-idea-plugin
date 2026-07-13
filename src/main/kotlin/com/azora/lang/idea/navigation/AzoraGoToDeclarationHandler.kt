@@ -65,7 +65,7 @@ class AzoraGoToDeclarationHandler : GotoDeclarationHandler {
         val symbolService = AzoraSymbolService.getInstance(project)
 
         // Search for the symbol in the current file and stdlib
-        val symbol = findSymbolByName(identifierName, symbolService, currentFilePath, currentSource)
+        val symbol = findSymbolByName(identifierName, symbolService, project, currentFilePath, currentSource)
             ?: return null
 
         // Navigate to the declaration
@@ -90,11 +90,12 @@ class AzoraGoToDeclarationHandler : GotoDeclarationHandler {
     private fun findSymbolByName(
         name: String,
         symbolService: AzoraSymbolService,
+        project: Project,
         currentFilePath: String,
         currentSource: String
     ): SymbolInfo? {
         // 1. Search in current file symbols
-        val allSymbols = symbolService.getAllVisibleSymbols(currentFilePath, currentSource)
+        val allSymbols = symbolService.getAllVisibleSymbols(project, currentFilePath, currentSource)
         val directMatch = allSymbols.find { it.name == name }
         if (directMatch != null) return directMatch
 

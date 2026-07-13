@@ -50,12 +50,19 @@ class AzoraLexerTest {
 
     @Test
     fun `declaration keywords are classified correctly`() {
-        val keywords = listOf("func", "pack", "enum", "slot", "impl", "scope", "var", "fin", "spec")
+        val keywords = listOf("func", "pack", "enum", "slot", "impl", "zone", "var", "fin", "spec")
         for (kw in keywords) {
             val tokens = tokenizeFiltered(kw)
             assertEquals(1, tokens.size, "Expected 1 token for '$kw'")
             assertEquals(AzoraTokenTypes.DECLARATION_KEYWORD, tokens[0].first, "Expected DECLARATION_KEYWORD for '$kw'")
         }
+    }
+
+    @Test
+    fun `scope is no longer a keyword`() {
+        val tokens = tokenizeFiltered("scope")
+        assertEquals(1, tokens.size)
+        assertEquals(AzoraTokenTypes.IDENTIFIER, tokens[0].first)
     }
 
     @Test
@@ -80,7 +87,7 @@ class AzoraLexerTest {
 
     @Test
     fun `memory keywords are classified correctly`() {
-        val keywords = listOf("alloc", "drop", "unsafe", "region")
+        val keywords = listOf("alloc", "drop", "unsafe", "deref")
         for (kw in keywords) {
             val tokens = tokenizeFiltered(kw)
             assertEquals(1, tokens.size, "Expected 1 token for '$kw'")
@@ -89,8 +96,20 @@ class AzoraLexerTest {
     }
 
     @Test
+    fun `get and set are ordinary identifiers`() {
+        val functionName = tokenizeFiltered("func get(): String {}").first { it.second == "get" }
+        assertEquals(AzoraTokenTypes.IDENTIFIER, functionName.first)
+
+        val propertyName = tokenizeFiltered("""spec Into<T>: T { ref self } use as "to${'$'}{T.typeName}"""").first { it.second == "use" }
+        assertEquals(AzoraTokenTypes.DECLARATION_KEYWORD, propertyName.first)
+
+        val setterName = tokenizeFiltered("func set(value: Int) {}").first { it.second == "set" }
+        assertEquals(AzoraTokenTypes.IDENTIFIER, setterName.first)
+    }
+
+    @Test
     fun `reactive keywords are classified correctly`() {
-        val keywords = listOf("rem", "view", "effect")
+        val keywords = listOf("mem", "rem", "ret", "view", "effect")
         for (kw in keywords) {
             val tokens = tokenizeFiltered(kw)
             assertEquals(1, tokens.size, "Expected 1 token for '$kw'")

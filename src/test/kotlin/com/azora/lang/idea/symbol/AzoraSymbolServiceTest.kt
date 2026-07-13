@@ -136,20 +136,34 @@ class AzoraSymbolServiceTest {
         assertEquals(2, fail.members.size)
     }
 
-    // ── Scope declarations ─────────────────────────────────────────────
+    // ── Zone declarations ──────────────────────────────────────────────
 
     @Test
-    fun `extracts scope with nested symbols`() {
+    fun `extracts zone with nested symbols`() {
         val source = """
-            scope MathUtils {
+            zone MathUtils {
                 func square(n: Int): Int {}
             }
         """.trimIndent()
         val symbols = service.getSymbolsForFile("test.az", source)
-        val scope = symbols.find { it.name == "MathUtils" }
-        assertNotNull(scope)
-        assertEquals(SymbolKind.SCOPE, scope!!.kind)
-        assertTrue(scope.members.any { it.name == "square" })
+        val zone = symbols.find { it.name == "MathUtils" }
+        assertNotNull(zone)
+        assertEquals(SymbolKind.SCOPE, zone!!.kind)
+        assertTrue(zone.members.any { it.name == "square" })
+    }
+
+    @Test
+    fun `extracts friend zone path`() {
+        val source = """
+            friend zone std::math {
+                func abs(x: Int): Int {}
+            }
+        """.trimIndent()
+        val symbols = service.getSymbolsForFile("test.az", source)
+        val zone = symbols.find { it.name == "std::math" }
+        assertNotNull(zone)
+        assertEquals(SymbolKind.SCOPE, zone!!.kind)
+        assertTrue(zone.members.any { it.name == "abs" })
     }
 
     // ── Var/Fin declarations ───────────────────────────────────────────
@@ -169,6 +183,18 @@ class AzoraSymbolServiceTest {
         assertTrue(varSym.isMutable)
         assertEquals(SymbolKind.FIN, finSym!!.kind)
         assertFalse(finSym.isMutable)
+    }
+
+    @Test
+    fun `infers constructor initialized binding type`() {
+        val source = """
+            pack Point
+            fin p = Point()
+        """.trimIndent()
+        val symbols = service.getSymbolsForFile("test.az", source)
+        val point = symbols.find { it.name == "p" }
+        assertNotNull(point)
+        assertEquals("Point", point!!.type)
     }
 
     // ── Task/Flow declarations ─────────────────────────────────────────
@@ -202,8 +228,8 @@ class AzoraSymbolServiceTest {
     @Test
     fun `extracts use declarations`() {
         val source = """
-            use std.os
-            use scope std
+            use std.io
+            use std.{math, concurrency}
         """.trimIndent()
         val symbols = service.getSymbolsForFile("test.az", source)
         val uses = symbols.filter { it.kind == SymbolKind.USE }
@@ -228,6 +254,45 @@ class AzoraSymbolServiceTest {
         val alias = symbols.find { it.kind == SymbolKind.TYPEALIAS }
         assertNotNull(alias)
         assertEquals("Callback", alias!!.name)
+    }
+
+    // ── Impl declarations ─────────────────────────────────────────────
+
+    @Test
+    fun `indexes kotlin style impl trait for type under target type`() {
+        val source = """
+            pack List<T>
+
+            impl Into<String> for List<T> {
+                func render(): String { ref self -> return "" }
+            }
+        """.trimIndent()
+        val members = service.getMembersForType("List", "test.az", source)
+        assertTrue(members.any { it.name == "render" }, "Expected impl member on List")
+    }
+
+    @Test
+    fun `indexes external operator implementation under target type`() {
+        val source = """
+            pack Set<T>
+            impl oper[] for Set<T> { ref self, index -> }
+        """.trimIndent()
+        val members = service.getMembersForType("Set", "test.az", source)
+        assertTrue(members.any { it.kind == SymbolKind.OPERATOR && it.name == "oper[]" })
+    }
+
+    // ── Stdlib zones ──────────────────────────────────────────────────
+
+    @Test
+    fun `resolves std module path members`() {
+        val members = service.resolveScopePath(listOf("std", "math"), "test.az", "")
+        assertTrue(members.any { it.name == "abs" })
+    }
+
+    @Test
+    fun `resolves std alias path members`() {
+        val members = service.resolveScopePath(listOf("math"), "test.az", "")
+        assertTrue(members.any { it.name == "abs" })
     }
 
     // ── Cache behavior ─────────────────────────────────────────────────

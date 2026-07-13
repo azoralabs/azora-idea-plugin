@@ -16,8 +16,13 @@
 
 package com.azora.lang.idea.symbol
 
+import com.azora.lang.idea.AzoraFileType
+import com.azora.lang.idea.AzoraLanguageFacts
+import com.azora.lang.idea.StdSymbol
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.project.Project
+import com.intellij.psi.search.FileTypeIndex
+import com.intellij.psi.search.GlobalSearchScope
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -110,6 +115,7 @@ enum class SymbolKind {
  * @param isExposed whether the symbol has the `expose` visibility modifier.
  * @param isMutable whether the symbol is mutable (`var` or `mut`).
  * @param defaultValueText the source text of the default value expression, or `null`.
+ * @param documentation documentation comment text attached to this symbol, or `null`.
  */
 data class SymbolInfo(
     val name: String,
@@ -123,7 +129,8 @@ data class SymbolInfo(
     val genericParams: List<String> = emptyList(),
     val isExposed: Boolean = false,
     val isMutable: Boolean = false,
-    val defaultValueText: String? = null
+    val defaultValueText: String? = null,
+    val documentation: String? = null
 )
 
 /**
@@ -194,6 +201,25 @@ class AzoraSymbolService {
     }
 
     /**
+     * Returns symbols visible from [filePath], including project `.az` files and
+     * synthetic stdlib module/symbol entries used by completion and navigation.
+     */
+    fun getAllVisibleSymbols(project: Project?, filePath: String, content: String): List<SymbolInfo> {
+        if (project == null) return getAllVisibleSymbols(filePath, content)
+
+        val merged = LinkedHashMap<String, SymbolInfo>()
+        fun add(symbol: SymbolInfo) {
+            val key = "${symbol.filePath}:${symbol.line}:${symbol.kind}:${symbol.name}"
+            merged.putIfAbsent(key, symbol)
+        }
+
+        getSymbolsForFile(filePath, content).forEach(::add)
+        getProjectSymbols(project, filePath).forEach(::add)
+        stdlibSymbols().forEach(::add)
+        return merged.values.toList()
+    }
+
+    /**
      * Returns the members (fields, methods, properties, etc.) of the named type.
      *
      * Searches both the type's own declaration and any `impl` blocks that
@@ -204,8 +230,12 @@ class AzoraSymbolService {
      * @param content the full text content of the file.
      * @return the combined list of member symbols.
      */
-    fun getMembersForType(typeName: String, filePath: String, content: String): List<SymbolInfo> {
-        val allSymbols = getAllVisibleSymbols(filePath, content)
+    fun getMembersForType(typeName: String, filePath: String, content: String, project: Project? = null): List<SymbolInfo> {
+        val allSymbols = if (project != null) {
+            getAllVisibleSymbols(project, filePath, content)
+        } else {
+            getAllVisibleSymbols(filePath, content)
+        }
         val result = mutableListOf<SymbolInfo>()
 
         for (sym in allSymbols) {
@@ -267,9 +297,19 @@ class AzoraSymbolService {
      * @param content the full text content of the file.
      * @return the symbols at the resolved scope, or an empty list if any segment is unresolved.
      */
-    fun resolveScopePath(path: List<String>, filePath: String, content: String): List<SymbolInfo> {
+    fun resolveScopePath(path: List<String>, filePath: String, content: String, project: Project? = null): List<SymbolInfo> {
         if (path.isEmpty()) return emptyList()
-        val allSymbols = getAllVisibleSymbols(filePath, content)
+        stdMembersForPath(path)?.let { return it }
+
+        val allSymbols = if (project != null) {
+            getAllVisibleSymbols(project, filePath, content)
+        } else {
+            getAllVisibleSymbols(filePath, content)
+        }
+        val flattened = path.joinToString("::")
+        allSymbols.find { it.name == flattened && it.kind == SymbolKind.SCOPE }?.let {
+            return it.members
+        }
         var current: List<SymbolInfo> = allSymbols
         for (segment in path) {
             val scope = current.find { it.name == segment && it.kind == SymbolKind.SCOPE }
@@ -287,8 +327,12 @@ class AzoraSymbolService {
      * @param content the full text content of the file.
      * @return the type annotation string, or `null` if not found or untyped.
      */
-    fun resolveVariableType(varName: String, filePath: String, content: String): String? {
-        val allSymbols = getAllVisibleSymbols(filePath, content)
+    fun resolveVariableType(varName: String, filePath: String, content: String, project: Project? = null): String? {
+        val allSymbols = if (project != null) {
+            getAllVisibleSymbols(project, filePath, content)
+        } else {
+            getAllVisibleSymbols(filePath, content)
+        }
         return allSymbols.find {
             (it.kind == SymbolKind.VAR || it.kind == SymbolKind.FIN) && it.name == varName
         }?.type
@@ -300,7 +344,120 @@ class AzoraSymbolService {
      * @return the known FFI target identifiers (e.g. `"C"`, `"JS"`, `"KOTLIN"`).
      */
     fun getBridgeTargets(): List<String> {
-        return listOf("C", "JS", "KOTLIN", "PYTHON", "CSHARP", "OBJC", "LLVM")
+        return listOf("C", "JS", "KOTLIN", "LLVM", "WASM")
+    }
+
+    private fun getProjectSymbols(project: Project, currentFilePath: String): List<SymbolInfo> {
+        return try {
+            FileTypeIndex.getFiles(AzoraFileType.INSTANCE, GlobalSearchScope.projectScope(project))
+                .asSequence()
+                .filter { it.path != currentFilePath }
+                .take(500)
+                .flatMap { file ->
+                    val text = runCatching { String(file.contentsToByteArray(), Charsets.UTF_8) }.getOrNull()
+                    if (text == null) emptySequence() else getSymbolsForFile(file.path, text).asSequence()
+                }
+                .toList()
+        } catch (_: Throwable) {
+            emptyList()
+        }
+    }
+
+    private fun stdMembersForPath(path: List<String>): List<SymbolInfo>? {
+        val joined = path.joinToString(".")
+        val normalized = AzoraLanguageFacts.stdAliases[joined] ?: joined
+        val modulePath = when {
+            normalized == "std" -> "std"
+            normalized.startsWith("std.") -> normalized
+            AzoraLanguageFacts.stdAliases.containsKey(path.firstOrNull()) -> {
+                val aliasRoot = AzoraLanguageFacts.stdAliases[path.first()] ?: return null
+                (listOf(aliasRoot) + path.drop(1)).joinToString(".")
+            }
+            else -> return null
+        }
+
+        val children = AzoraLanguageFacts.stdChildren(modulePath)
+        if (children.isEmpty()) return null
+        val modulePrefix = if (modulePath == "std") "std" else modulePath
+        return children.map { child ->
+            val childModule = "$modulePrefix.$child"
+            val stdSymbol = AzoraLanguageFacts.stdSymbols.find { it.module == modulePath && it.name == child }
+            if (stdSymbol != null) {
+                stdSymbol.toSymbolInfo()
+            } else {
+                SymbolInfo(
+                    name = child,
+                    kind = SymbolKind.SCOPE,
+                    type = childModule,
+                    filePath = "<stdlib>",
+                    documentation = "Stdlib module `$childModule`."
+                )
+            }
+        }
+    }
+
+    private fun stdlibSymbols(): List<SymbolInfo> {
+        val symbolsByModule = AzoraLanguageFacts.stdSymbols.groupBy { it.module }
+        val moduleScopes = AzoraLanguageFacts.stdModules
+            .filter { it != "std" }
+            .map { module ->
+                val shortName = module.substringAfterLast(".")
+                SymbolInfo(
+                    name = module,
+                    kind = SymbolKind.SCOPE,
+                    members = symbolsByModule[module].orEmpty().map { it.toSymbolInfo() },
+                    filePath = "<stdlib>",
+                    documentation = "Stdlib module `$module`."
+                ) to SymbolInfo(
+                    name = shortName,
+                    kind = SymbolKind.SCOPE,
+                    type = module,
+                    members = symbolsByModule[module].orEmpty().map { it.toSymbolInfo() },
+                    filePath = "<stdlib>",
+                    documentation = "Stdlib module `$module`."
+                )
+            }
+
+        val root = SymbolInfo(
+            name = "std",
+            kind = SymbolKind.SCOPE,
+            members = moduleScopes.map { it.second },
+            filePath = "<stdlib>",
+            documentation = "Azora standard library root zone."
+        )
+
+        val aliases = AzoraLanguageFacts.stdAliases.map { (alias, module) ->
+            SymbolInfo(
+                name = alias,
+                kind = SymbolKind.SCOPE,
+                type = module,
+                members = symbolsByModule[module].orEmpty().map { it.toSymbolInfo() },
+                filePath = "<stdlib>",
+                documentation = "Alias for `$module` when imported from stdlib."
+            )
+        }
+
+        val directStdSymbols = AzoraLanguageFacts.stdSymbols.map { it.toSymbolInfo() }
+        return listOf(root) + moduleScopes.flatMap { listOf(it.first, it.second) } + aliases + directStdSymbols
+    }
+
+    private fun StdSymbol.toSymbolInfo(): SymbolInfo {
+        val kind = when (kind) {
+            "func" -> SymbolKind.FUNC
+            "pack" -> SymbolKind.PACK
+            "slot" -> SymbolKind.SLOT
+            "spec" -> SymbolKind.SPEC
+            "prop" -> SymbolKind.PROPERTY
+            "fin" -> SymbolKind.FIN
+            else -> SymbolKind.FUNC
+        }
+        return SymbolInfo(
+            name = name,
+            kind = kind,
+            type = detail,
+            filePath = "<stdlib>",
+            documentation = "`${module.replace(".", "::")}::$name` - $detail"
+        )
     }
 
     // -----------------------------------------------------------------------
@@ -311,7 +468,7 @@ class AzoraSymbolService {
      * Extracts all top-level symbols from the given source [content].
      *
      * Iterates line-by-line, matching known Azora declaration patterns
-     * (package, use, pack, enum, func, scope, impl, etc.) and building
+     * (package, use, pack, enum, func, zone, impl, etc.) and building
      * [SymbolInfo] instances with nested members where applicable.
      *
      * @param content the full source text to scan.
@@ -328,33 +485,29 @@ class AzoraSymbolService {
             val trimmed = line.trimStart()
             val lineNum = i + 1
             val offset = content.lineOffset(i)
+            val documentation = extractDocComment(lines, i)
 
             when {
                 trimmed.startsWith("package ") -> {
                     val name = trimmed.removePrefix("package ").trim()
-                    result.add(SymbolInfo(name, SymbolKind.PACKAGE, line = lineNum, offset = offset, filePath = filePath))
-                }
-
-                trimmed.startsWith("use scope ") -> {
-                    val name = trimmed.removePrefix("use scope ").trim()
-                    result.add(SymbolInfo(name, SymbolKind.USE, line = lineNum, offset = offset, filePath = filePath))
+                    result.add(SymbolInfo(name, SymbolKind.PACKAGE, line = lineNum, offset = offset, filePath = filePath, documentation = documentation))
                 }
 
                 trimmed.startsWith("use ") -> {
                     val name = trimmed.removePrefix("use ").trim()
-                    result.add(SymbolInfo(name, SymbolKind.USE, line = lineNum, offset = offset, filePath = filePath))
+                    result.add(SymbolInfo(name, SymbolKind.USE, line = lineNum, offset = offset, filePath = filePath, documentation = documentation))
                 }
 
                 matchesDecl(trimmed, "view") -> {
                     val (name, exposed) = extractNameAndExposed(trimmed, "view")
                     val params = extractParams(trimmed)
-                    result.add(SymbolInfo(name, SymbolKind.VIEW, params = params, line = lineNum, offset = offset, filePath = filePath, isExposed = exposed))
+                    result.add(SymbolInfo(name, SymbolKind.VIEW, params = params, line = lineNum, offset = offset, filePath = filePath, isExposed = exposed, documentation = documentation))
                 }
 
                 matchesDecl(trimmed, "pack") -> {
                     val (name, exposed) = extractNameAndExposed(trimmed, "pack")
                     val fields = extractBlockFields(lines, i)
-                    result.add(SymbolInfo(name, SymbolKind.PACK, members = fields.map { it.copy(filePath = filePath) }, params = fields.map { it.name to it.type }, line = lineNum, offset = offset, filePath = filePath, isExposed = exposed))
+                    result.add(SymbolInfo(name, SymbolKind.PACK, members = fields.map { it.copy(filePath = filePath) }, params = fields.map { it.name to it.type }, line = lineNum, offset = offset, filePath = filePath, isExposed = exposed, documentation = documentation))
                 }
 
                 matchesDecl(trimmed, "enum") -> {
@@ -363,7 +516,7 @@ class AzoraSymbolService {
                     val variants = extractVariants(lines, i).map {
                         SymbolInfo(it, SymbolKind.VARIANT, type = name, filePath = filePath)
                     }
-                    result.add(SymbolInfo(name, SymbolKind.ENUM, members = variants, params = params, line = lineNum, offset = offset, filePath = filePath, isExposed = exposed))
+                    result.add(SymbolInfo(name, SymbolKind.ENUM, members = variants, params = params, line = lineNum, offset = offset, filePath = filePath, isExposed = exposed, documentation = documentation))
                 }
 
                 matchesDecl(trimmed, "slot") -> {
@@ -371,7 +524,7 @@ class AzoraSymbolService {
                     val variants = extractSlotVariants(lines, i).map { (vName, vParams) ->
                         SymbolInfo(vName, SymbolKind.VARIANT, type = name, params = vParams, filePath = filePath)
                     }
-                    result.add(SymbolInfo(name, SymbolKind.SLOT, members = variants, line = lineNum, offset = offset, filePath = filePath, isExposed = exposed))
+                    result.add(SymbolInfo(name, SymbolKind.SLOT, members = variants, line = lineNum, offset = offset, filePath = filePath, isExposed = exposed, documentation = documentation))
                 }
 
                 matchesDecl(trimmed, "fail") -> {
@@ -379,14 +532,28 @@ class AzoraSymbolService {
                     val variants = extractVariants(lines, i).map {
                         SymbolInfo(it, SymbolKind.VARIANT, type = name, filePath = filePath)
                     }
-                    result.add(SymbolInfo(name, SymbolKind.FAIL, members = variants, line = lineNum, offset = offset, filePath = filePath, isExposed = exposed))
+                    result.add(SymbolInfo(name, SymbolKind.FAIL, members = variants, line = lineNum, offset = offset, filePath = filePath, isExposed = exposed, documentation = documentation))
                 }
 
-                matchesDecl(trimmed, "scope") -> {
-                    val (name, exposed) = extractNameAndExposed(trimmed, "scope")
+                matchesDecl(trimmed, "zone") -> {
+                    val (name, exposed) = extractNameAndExposed(trimmed, "zone")
                     val blockContent = extractBlockContent(lines, i)
                     val members = extractSymbols(blockContent, filePath)
-                    result.add(SymbolInfo(name, SymbolKind.SCOPE, members = members, line = lineNum, offset = offset, filePath = filePath, isExposed = exposed))
+                    result.add(SymbolInfo(name, SymbolKind.SCOPE, members = members, line = lineNum, offset = offset, filePath = filePath, isExposed = exposed, documentation = documentation))
+                }
+
+                trimmed.startsWith("impl oper") -> {
+                    val typeName = simpleTypeName(trimmed.substringAfter(" for ", "").substringBefore("{").trim())
+                    val operatorName = trimmed.removePrefix("impl ").substringBefore(" for ").substringBefore("(").trim()
+                    val member = SymbolInfo(operatorName, SymbolKind.OPERATOR, line = lineNum, offset = offset, filePath = filePath, documentation = documentation)
+                    result.add(SymbolInfo(typeName, SymbolKind.PACK, members = listOf(member), line = lineNum, offset = offset, filePath = filePath, documentation = documentation))
+                }
+
+                trimmed.startsWith("impl as ") -> {
+                    val typeName = simpleTypeName(trimmed.substringAfter(" for ", "").substringBefore("{").trim())
+                    val targetType = trimmed.removePrefix("impl as ").substringBefore(" for ").trim()
+                    val member = SymbolInfo("as $targetType", SymbolKind.METHOD, type = targetType, line = lineNum, offset = offset, filePath = filePath, documentation = documentation)
+                    result.add(SymbolInfo(typeName, SymbolKind.PACK, members = listOf(member), line = lineNum, offset = offset, filePath = filePath, documentation = documentation))
                 }
 
                 matchesDecl(trimmed, "impl") -> {
@@ -394,92 +561,93 @@ class AzoraSymbolService {
                     val specName = extractImplSpecName(trimmed)
                     val members = extractImplMembers(lines, i, filePath)
                     val kind = if (specName != null) SymbolKind.IMPL_SPEC else SymbolKind.PACK
-                    result.add(SymbolInfo(typeName, kind, type = specName, members = members, line = lineNum, offset = offset, filePath = filePath))
+                    result.add(SymbolInfo(typeName, kind, type = specName, members = members, line = lineNum, offset = offset, filePath = filePath, documentation = documentation))
                 }
 
                 isFuncDecl(trimmed) -> {
                     val (name, exposed) = extractFuncNameAndExposed(trimmed)
                     val params = extractParams(trimmed)
                     val returnType = extractReturnType(trimmed)
-                    result.add(SymbolInfo(name, SymbolKind.FUNC, type = returnType, params = params, line = lineNum, offset = offset, filePath = filePath, isExposed = exposed))
+                    result.add(SymbolInfo(name, SymbolKind.FUNC, type = returnType, params = params, line = lineNum, offset = offset, filePath = filePath, isExposed = exposed, documentation = documentation))
                 }
 
                 matchesDecl(trimmed, "task") -> {
                     val (name, exposed) = extractNameAndExposed(trimmed, "task")
                     val params = extractParams(trimmed)
                     val returnType = extractReturnType(trimmed)
-                    result.add(SymbolInfo(name, SymbolKind.TASK, type = returnType, params = params, line = lineNum, offset = offset, filePath = filePath, isExposed = exposed))
+                    result.add(SymbolInfo(name, SymbolKind.TASK, type = returnType, params = params, line = lineNum, offset = offset, filePath = filePath, isExposed = exposed, documentation = documentation))
                 }
 
                 matchesDecl(trimmed, "flow") -> {
                     val (name, exposed) = extractNameAndExposed(trimmed, "flow")
                     val params = extractParams(trimmed)
                     val returnType = extractReturnType(trimmed)
-                    result.add(SymbolInfo(name, SymbolKind.FLOW, type = returnType, params = params, line = lineNum, offset = offset, filePath = filePath, isExposed = exposed))
+                    result.add(SymbolInfo(name, SymbolKind.FLOW, type = returnType, params = params, line = lineNum, offset = offset, filePath = filePath, isExposed = exposed, documentation = documentation))
                 }
 
                 matchesDecl(trimmed, "solo") -> {
                     val (name, exposed) = extractNameAndExposed(trimmed, "solo")
                     val fields = extractBlockFields(lines, i)
                     val methods = extractBlockMethods(lines, i, filePath)
-                    result.add(SymbolInfo(name, SymbolKind.SOLO, members = fields.map { it.copy(filePath = filePath) } + methods, line = lineNum, offset = offset, filePath = filePath, isExposed = exposed))
+                    result.add(SymbolInfo(name, SymbolKind.SOLO, members = fields.map { it.copy(filePath = filePath) } + methods, line = lineNum, offset = offset, filePath = filePath, isExposed = exposed, documentation = documentation))
                 }
 
                 matchesDecl(trimmed, "wrap") -> {
                     val (name, _) = extractNameAndExposed(trimmed, "wrap")
-                    result.add(SymbolInfo(name, SymbolKind.WRAP, line = lineNum, offset = offset, filePath = filePath))
+                    result.add(SymbolInfo(name, SymbolKind.WRAP, line = lineNum, offset = offset, filePath = filePath, documentation = documentation))
                 }
 
                 matchesDecl(trimmed, "spec") -> {
                     val (name, exposed) = extractNameAndExposed(trimmed, "spec")
                     val methods = extractBlockMethods(lines, i, filePath)
-                    result.add(SymbolInfo(name, SymbolKind.SPEC, members = methods, line = lineNum, offset = offset, filePath = filePath, isExposed = exposed))
+                    result.add(SymbolInfo(name, SymbolKind.SPEC, members = methods, line = lineNum, offset = offset, filePath = filePath, isExposed = exposed, documentation = documentation))
                 }
 
                 matchesDecl(trimmed, "infx") -> {
                     val afterInfx = trimmed.substringAfter("infx ").trim()
                     val name = afterInfx.substringBefore("(").substringBefore("{").substringBefore(" ").trim()
-                    result.add(SymbolInfo(name, SymbolKind.INFX, line = lineNum, offset = offset, filePath = filePath))
+                    result.add(SymbolInfo(name, SymbolKind.INFX, line = lineNum, offset = offset, filePath = filePath, documentation = documentation))
                 }
 
                 trimmed.startsWith("bridge ") -> {
                     val target = trimmed.removePrefix("bridge ").substringBefore("{").trim().removePrefix(".")
                     val funcs = extractBridgeFuncs(lines, i, filePath)
-                    result.add(SymbolInfo(target, SymbolKind.BRIDGE, members = funcs, line = lineNum, offset = offset, filePath = filePath))
+                    result.add(SymbolInfo(target, SymbolKind.BRIDGE, members = funcs, line = lineNum, offset = offset, filePath = filePath, documentation = documentation))
                 }
 
                 trimmed.startsWith("hook ") -> {
                     val name = trimmed.removePrefix("hook ").substringBefore("(").substringBefore("{").trim()
-                    result.add(SymbolInfo(name, SymbolKind.HOOK, line = lineNum, offset = offset, filePath = filePath))
+                    result.add(SymbolInfo(name, SymbolKind.HOOK, line = lineNum, offset = offset, filePath = filePath, documentation = documentation))
                 }
 
                 trimmed.startsWith("test ") -> {
                     val name = extractTestName(trimmed)
-                    result.add(SymbolInfo(name, SymbolKind.TEST, line = lineNum, offset = offset, filePath = filePath))
+                    result.add(SymbolInfo(name, SymbolKind.TEST, line = lineNum, offset = offset, filePath = filePath, documentation = documentation))
                 }
 
                 trimmed.startsWith("typealias ") -> {
                     val rest = trimmed.removePrefix("typealias ").trim()
                     val name = rest.substringBefore("=").substringBefore(" ").trim()
                     val type = rest.substringAfter("=", "").trim().takeIf { it.isNotEmpty() }
-                    result.add(SymbolInfo(name, SymbolKind.TYPEALIAS, type = type, line = lineNum, offset = offset, filePath = filePath))
+                    result.add(SymbolInfo(name, SymbolKind.TYPEALIAS, type = type, line = lineNum, offset = offset, filePath = filePath, documentation = documentation))
                 }
 
                 matchesDecl(trimmed, "deco") -> {
                     val (name, _) = extractNameAndExposed(trimmed, "deco")
-                    result.add(SymbolInfo(name, SymbolKind.FUNC, line = lineNum, offset = offset, filePath = filePath))
+                    result.add(SymbolInfo(name, SymbolKind.FUNC, line = lineNum, offset = offset, filePath = filePath, documentation = documentation))
                 }
 
                 isTopLevelVarFin(trimmed) -> {
-                    val isMutable = trimmed.trimStart().let { it.startsWith("var ") || it.startsWith("expose var ") }
-                    val keyword = if (isMutable) "var" else "fin"
+                    val core = stripModifiers(trimmed)
+                    val keyword = listOf("var", "fin", "mem", "rem", "ret").firstOrNull { core.startsWith("$it ") } ?: "fin"
+                    val isMutable = keyword == "var" || keyword == "mem" || keyword == "rem"
                     val exposed = trimmed.trimStart().startsWith("expose ")
-                    val afterKw = trimmed.substringAfter("$keyword ").trim()
+                    val afterKw = core.substringAfter("$keyword ").trim()
                     val name = afterKw.substringBefore(":").substringBefore("=").substringBefore(" ").trim()
-                    val type = extractTypeAnnotation(afterKw)
+                    val type = extractTypeAnnotation(afterKw) ?: inferTypeFromInitializer(afterKw)
                     val defaultVal = afterKw.substringAfter("=", "").trim().takeIf { it.isNotEmpty() }
                     val kind = if (isMutable) SymbolKind.VAR else SymbolKind.FIN
-                    result.add(SymbolInfo(name, kind, type = type, isMutable = isMutable, line = lineNum, offset = offset, filePath = filePath, isExposed = exposed, defaultValueText = defaultVal))
+                    result.add(SymbolInfo(name, kind, type = type, isMutable = isMutable, line = lineNum, offset = offset, filePath = filePath, isExposed = exposed, defaultValueText = defaultVal, documentation = documentation))
                 }
 
                 trimmed.startsWith("threadlocal ") -> {
@@ -488,9 +656,9 @@ class AzoraSymbolService {
                     val keyword = if (isMutable) "var" else "fin"
                     val afterKw = rest.substringAfter("$keyword ").trim()
                     val name = afterKw.substringBefore(":").substringBefore("=").substringBefore(" ").trim()
-                    val type = extractTypeAnnotation(afterKw)
+                    val type = extractTypeAnnotation(afterKw) ?: inferTypeFromInitializer(afterKw)
                     val kind = if (isMutable) SymbolKind.VAR else SymbolKind.FIN
-                    result.add(SymbolInfo(name, kind, type = type, isMutable = isMutable, line = lineNum, offset = offset, filePath = filePath))
+                    result.add(SymbolInfo(name, kind, type = type, isMutable = isMutable, line = lineNum, offset = offset, filePath = filePath, documentation = documentation))
                 }
             }
 
@@ -507,9 +675,9 @@ class AzoraSymbolService {
     /**
      * Checks whether [trimmed] is a declaration line for the given [keyword].
      *
-     * Strips leading modifiers (`expose`, `confine`, `inline`) and checks
+     * Strips leading modifiers (`expose`, `confine`, `inline`, etc.) and checks
      * that the remaining text starts with the keyword followed by a space or `<`.
-     * For `"scope"`, additionally requires an identifier name (not just `{`).
+     * For `"zone"`, additionally requires an identifier name (not just `{`).
      *
      * @param trimmed the leading-whitespace-stripped source line.
      * @param keyword the declaration keyword to match (e.g. `"pack"`, `"func"`).
@@ -518,8 +686,8 @@ class AzoraSymbolService {
     private fun matchesDecl(trimmed: String, keyword: String): Boolean {
         val core = stripModifiers(trimmed)
         if (!core.startsWith("$keyword ") && !core.startsWith("$keyword<")) return false
-        // For "scope", require a name, "scope {" is an unnamed function body, not a declaration
-        if (keyword == "scope") {
+        // For "zone", require a name, "zone {" is an unnamed function body, not a declaration.
+        if (keyword == "zone") {
             val afterKw = skipGenericParams(core.removePrefix(keyword)).trimStart()
             // Must have an identifier name, not just "{"
             if (afterKw.isEmpty() || afterKw[0] == '{') return false
@@ -538,20 +706,24 @@ class AzoraSymbolService {
         val exposed = trimmed.startsWith("expose ")
         val core = stripModifiers(trimmed)
         val afterKeyword = skipGenericParams(core.removePrefix(keyword)).trimStart()
-        val name = afterKeyword.substringBefore("(").substringBefore("{")
-            .substringBefore("<").substringBefore(":").substringBefore(" ").trim()
+        val name = if (keyword == "zone") {
+            afterKeyword.substringBefore("{").substringBefore(" ").trim()
+        } else {
+            afterKeyword.substringBefore("(").substringBefore("{")
+                .substringBefore("<").substringBefore(":").substringBefore(" ").trim()
+        }
         return name to exposed
     }
 
     /**
-     * Strips leading modifiers (`expose`, `confine`, `inline`) from a line.
+     * Strips leading modifiers (`expose`, `confine`, `inline`, etc.) from a line.
      *
      * @param trimmed the source line to strip.
      * @return the line with leading modifiers removed.
      */
     private fun stripModifiers(trimmed: String): String {
         var s = trimmed
-        for (mod in listOf("expose ", "confine ", "inline ")) {
+        for (mod in listOf("expose ", "confine ", "protect ", "friend ", "inline ", "deepinline ", "noinline ", "unsafe ", "threadlocal ")) {
             if (s.startsWith(mod)) {
                 s = s.removePrefix(mod).trimStart()
             }
@@ -622,6 +794,7 @@ class AzoraSymbolService {
     private fun isTopLevelVarFin(trimmed: String): Boolean {
         if (trimmed.contains("{") && !trimmed.contains("=")) return false
         return trimmed.startsWith("var ") || trimmed.startsWith("fin ") ||
+               trimmed.startsWith("mem ") || trimmed.startsWith("rem ") || trimmed.startsWith("ret ") ||
                trimmed.startsWith("expose var ") || trimmed.startsWith("expose fin ")
     }
 
@@ -672,6 +845,53 @@ class AzoraSymbolService {
         return afterName.substringAfter(":").substringBefore("=").substringBefore("{").trim().takeIf { it.isNotEmpty() }
     }
 
+    private fun inferTypeFromInitializer(afterName: String): String? {
+        val initializer = afterName.substringAfter("=", "").trim()
+        if (initializer.isBlank()) return null
+        val ctor = Regex("""^([A-Z][A-Za-z0-9_]*)\s*(?:<[^>]+>)?\s*\(""").find(initializer)
+        if (ctor != null) return ctor.groupValues[1]
+        return when {
+            initializer.startsWith("\"") -> "String"
+            initializer == "true" || initializer == "false" -> "Bool"
+            initializer.matches(Regex("""[-+]?\d+""")) -> "Int"
+            initializer.matches(Regex("""[-+]?\d+\.\d+.*""")) -> "Real"
+            else -> null
+        }
+    }
+
+    private fun extractDocComment(lines: List<String>, declarationLine: Int): String? {
+        var i = declarationLine - 1
+        while (i >= 0 && lines[i].isBlank()) i--
+        if (i < 0) return null
+
+        val line = lines[i].trim()
+        if (line.startsWith("///")) {
+            val docs = ArrayDeque<String>()
+            while (i >= 0 && lines[i].trimStart().startsWith("///")) {
+                docs.addFirst(lines[i].trimStart().removePrefix("///").trim())
+                i--
+            }
+            return docs.joinToString("\n").trim().takeIf { it.isNotEmpty() }
+        }
+
+        if (!line.endsWith("*/")) return null
+        val docs = ArrayDeque<String>()
+        while (i >= 0) {
+            val trimmed = lines[i].trim()
+            docs.addFirst(
+                trimmed
+                    .removePrefix("/**")
+                    .removePrefix("/*")
+                    .removeSuffix("*/")
+                    .trimStart('*')
+                    .trim()
+            )
+            if (trimmed.startsWith("/**") || trimmed.startsWith("/*")) break
+            i--
+        }
+        return docs.joinToString("\n").trim().takeIf { it.isNotEmpty() }
+    }
+
     /**
      * Extracts the test name from a `test` declaration line.
      *
@@ -699,24 +919,27 @@ class AzoraSymbolService {
      */
     private fun extractImplTypeName(trimmed: String): String {
         val afterImpl = trimmed.substringAfter("impl ").trim()
+        if (afterImpl.contains(" for ")) {
+            return simpleTypeName(afterImpl.substringAfter(" for ").substringBefore("{").trim())
+        }
         // Skip generic params: impl<T> TypeName { or impl<T> ctor() for Storage {
         val afterGenerics = skipGenericParams(afterImpl).trimStart()
-        return afterGenerics.substringBefore("{").substringBefore(" ").substringBefore(":").substringBefore("(").trim()
+        return simpleTypeName(afterGenerics.substringBefore("{").substringBefore(" ").substringBefore(":").substringBefore("(").trim())
     }
 
     /**
      * Extracts the spec (trait) name from an `impl` declaration, if present.
      *
-     * Recognizes both `impl Type for Spec` and `impl Type: Spec` syntax.
+     * Recognizes `impl Spec for Type` and legacy `impl Type: Spec` syntax.
      *
      * @param trimmed the leading-whitespace-stripped source line.
      * @return the spec name, or `null` if this is a plain impl block.
      */
     private fun extractImplSpecName(trimmed: String): String? {
-        // impl TypeName for SpecName { or impl TypeName: SpecName {
+        // impl SpecName for TypeName { or impl TypeName: SpecName {
         val afterImpl = skipGenericParams(trimmed.substringAfter("impl ").trim()).trimStart()
         return when {
-            afterImpl.contains(" for ") -> afterImpl.substringAfter(" for ").substringBefore("{").trim()
+            afterImpl.contains(" for ") -> afterImpl.substringBefore(" for ").substringBefore("<").trim()
             afterImpl.contains(": ") -> {
                 val afterColon = afterImpl.substringAfter(": ").substringBefore("{").trim()
                 if (afterColon.isNotEmpty() && afterColon[0].isUpperCase()) afterColon else null
@@ -747,7 +970,7 @@ class AzoraSymbolService {
                 if (ch == '}') depth--
             }
             if (started && depth == 1) {
-                val memberTrimmed = l.trimStart()
+                val memberTrimmed = stripModifiers(l.trimStart())
                 val isMutable = memberTrimmed.startsWith("var ") || memberTrimmed.startsWith("mut ")
                 val isField = memberTrimmed.startsWith("var ") || memberTrimmed.startsWith("fin ") || memberTrimmed.startsWith("mut ")
                 if (isField) {
@@ -758,7 +981,7 @@ class AzoraSymbolService {
                     }
                     val afterKw = memberTrimmed.substringAfter("$keyword ").trim()
                     val name = afterKw.substringBefore(":").substringBefore("=").substringBefore(" ").trim()
-                    val type = extractTypeAnnotation(afterKw)
+                    val type = extractTypeAnnotation(afterKw) ?: inferTypeFromInitializer(afterKw)
                     val defaultVal = afterKw.substringAfter("=", "").substringBefore(",").trim().takeIf { it.isNotEmpty() }
                     fields.add(SymbolInfo(name, SymbolKind.FIELD, type = type, isMutable = isMutable, line = j + 1, defaultValueText = defaultVal))
                 }
@@ -801,13 +1024,25 @@ class AzoraSymbolService {
                 if (ch == '}') depth--
             }
             if (started && depth == 1) {
-                val memberTrimmed = l.trimStart()
+                val memberTrimmed = stripModifiers(l.trimStart())
                 when {
                     memberTrimmed.startsWith("func ") || memberTrimmed.startsWith("func<") -> {
                         val (name, _) = extractFuncNameAndExposed(memberTrimmed)
                         val params = extractParams(memberTrimmed)
                         val returnType = extractReturnType(memberTrimmed)
                         methods.add(SymbolInfo(name, SymbolKind.METHOD, type = returnType, params = params, line = j + 1, filePath = filePath))
+                    }
+                    memberTrimmed.startsWith("task ") || memberTrimmed.startsWith("task<") -> {
+                        val (name, _) = extractNameAndExposed(memberTrimmed, "task")
+                        val params = extractParams(memberTrimmed)
+                        val returnType = extractReturnType(memberTrimmed)
+                        methods.add(SymbolInfo(name, SymbolKind.TASK, type = returnType, params = params, line = j + 1, filePath = filePath))
+                    }
+                    memberTrimmed.startsWith("flow ") || memberTrimmed.startsWith("flow<") -> {
+                        val (name, _) = extractNameAndExposed(memberTrimmed, "flow")
+                        val params = extractParams(memberTrimmed)
+                        val returnType = extractReturnType(memberTrimmed)
+                        methods.add(SymbolInfo(name, SymbolKind.FLOW, type = returnType, params = params, line = j + 1, filePath = filePath))
                     }
                     memberTrimmed.startsWith("prop ") -> {
                         val name = memberTrimmed.removePrefix("prop ").substringBefore(":").substringBefore("{").trim()
@@ -843,6 +1078,14 @@ class AzoraSymbolService {
      */
     private fun extractImplMembers(lines: List<String>, startIdx: Int, filePath: String): List<SymbolInfo> {
         return extractBlockMethods(lines, startIdx, filePath)
+    }
+
+    private fun simpleTypeName(typeText: String): String {
+        return typeText
+            .substringBefore("<")
+            .substringBefore("?")
+            .trim()
+            .substringAfterLast("::").substringAfterLast(".")
     }
 
     /**

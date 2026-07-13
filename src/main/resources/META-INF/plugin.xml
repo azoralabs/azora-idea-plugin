@@ -1,18 +1,18 @@
 <idea-plugin>
     <id>com.azora.lang.idea</id>
     <name>Azora Language</name>
-    <version>0.0.1</version>
+    <version>0.0.3</version>
     <vendor email="support@azora.dev" url="https://azora.dev">AzoraTech</vendor>
     <description><![CDATA[
         Full language support for the <b>Azora</b> programming language.
 
         <ul>
             <li>Syntax highlighting with semantic keyword coloring (declaration, control-flow, modifier, memory, reactive)</li>
-            <li>Context-aware code completion from real AST (types, functions, variables, pack fields, enum variants, scope members)</li>
+            <li>Context-aware code completion for types, functions, variables, pack fields, enum variants, zone members, std modules, and annotations</li>
             <li>Go-to-definition (Ctrl+Click) for identifiers across files and stdlib</li>
             <li>Quick documentation (Ctrl+Q) showing type signatures, parameters, and fields</li>
             <li>Error and warning annotations from preprocessor, parser, and semantic analysis</li>
-            <li>Brace matching and code folding (declarations, comments, imports, regions)</li>
+            <li>Brace matching and code folding (declarations, comments, imports, and editor regions)</li>
             <li>Structure view (outline of functions, packs, enums, views, impls, tests, etc.)</li>
             <li>Find usages for identifiers</li>
             <li>Line and block commenting</li>
@@ -42,6 +42,9 @@
 
         <colorSettingsPage
             implementation="com.azora.lang.idea.highlighting.AzoraColorSettingsPage"/>
+
+        <langCodeStyleSettingsProvider
+            implementation="com.azora.lang.idea.formatting.AzoraCodeStyleSettingsProvider"/>
 
         <!-- Code Completion -->
         <completion.contributor

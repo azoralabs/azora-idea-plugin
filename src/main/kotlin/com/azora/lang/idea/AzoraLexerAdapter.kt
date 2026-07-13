@@ -260,12 +260,12 @@ class AzoraLexerAdapter : LexerBase() {
                     result.add(LexToken(type, start + startOffset, pos + startOffset))
                 }
 
-                // Identifier or keyword
-                ch.isLetter() || ch == '_' -> {
+                // Identifier or keyword (`$` is a valid identifier char, e.g. `$index`)
+                ch.isLetter() || ch == '_' || ch == '$' -> {
                     val start = pos
-                    while (pos < len && (source[pos].isLetterOrDigit() || source[pos] == '_')) pos++
+                    while (pos < len && (source[pos].isLetterOrDigit() || source[pos] == '_' || source[pos] == '$')) pos++
                     val word = source.substring(start, pos)
-                    val type = KEYWORD_MAP[word] ?: AzoraTokenTypes.IDENTIFIER
+                    val type = classifyWord(source, start, pos, word)
                     result.add(LexToken(type, start + startOffset, pos + startOffset))
                 }
 
@@ -315,7 +315,6 @@ class AzoraLexerAdapter : LexerBase() {
             ',' -> AzoraTokenTypes.COMMA to 1
             ';' -> AzoraTokenTypes.SEMICOLON to 1
             ':' -> if (next == ':') AzoraTokenTypes.OPERATOR to 2 else AzoraTokenTypes.COLON to 1
-            '$' -> AzoraTokenTypes.OPERATOR to 1
             '.' -> when {
                 next == '.' && next2 == '<' -> AzoraTokenTypes.OPERATOR to 3  // ..<
                 next == '.' && next2 == '.' -> AzoraTokenTypes.OPERATOR to 3  // ...
@@ -445,59 +444,82 @@ class AzoraLexerAdapter : LexerBase() {
         tok.type == AzoraTokenTypes.OPERATOR && tok.end - tok.start == 1 &&
                 buffer.length > tok.start && buffer[tok.start] == '>'
 
+    private fun classifyWord(source: String, start: Int, end: Int, word: String): IElementType {
+        if (word in SOFT_KEYWORDS) {
+            return contextualKeywordType(source, start, end, word) ?: AzoraTokenTypes.IDENTIFIER
+        }
+        return KEYWORD_MAP[word] ?: AzoraTokenTypes.IDENTIFIER
+    }
+
+    private fun contextualKeywordType(source: String, start: Int, end: Int, word: String): IElementType? {
+        val previous = previousWord(source, start)
+        val next = nextWord(source, end)
+        val nextChar = nextNonWhitespaceChar(source, end)
+        if (previous in DECLARATION_NAME_PREFIXES) return null
+        return when (word) {
+            "friend" -> if (next == "zone") AzoraTokenTypes.MODIFIER_KEYWORD else null
+            "where" -> if (previous != null) AzoraTokenTypes.CONTROL_KEYWORD else null
+            "with", "by", "reverse", "each" -> if (previous != null) AzoraTokenTypes.CONTROL_KEYWORD else null
+            "out" -> if (nextChar == '{') AzoraTokenTypes.CONTROL_KEYWORD else null
+            "base" -> AzoraTokenTypes.KEYWORD
+            else -> null
+        }
+    }
+
+    private fun previousWord(source: String, start: Int): String? {
+        var i = start - 1
+        while (i >= 0 && source[i].isWhitespace()) i--
+        if (i < 0 || !(source[i].isLetterOrDigit() || source[i] == '_' || source[i] == '$')) return null
+        val end = i + 1
+        while (i >= 0 && (source[i].isLetterOrDigit() || source[i] == '_' || source[i] == '$')) i--
+        return source.substring(i + 1, end)
+    }
+
+    private fun nextWord(source: String, end: Int): String? {
+        var i = end
+        while (i < source.length && source[i].isWhitespace()) i++
+        if (i >= source.length || !(source[i].isLetter() || source[i] == '_' || source[i] == '$')) return null
+        val start = i
+        while (i < source.length && (source[i].isLetterOrDigit() || source[i] == '_' || source[i] == '$')) i++
+        return source.substring(start, i)
+    }
+
+    private fun nextNonWhitespaceChar(source: String, end: Int): Char? {
+        var i = end
+        while (i < source.length && source[i].isWhitespace()) i++
+        return source.getOrNull(i)
+    }
+
     companion object {
 
         /** Keywords that introduce declarations (functions, types, modules, etc.). */
-        private val DECLARATION_KEYWORDS = setOf(
-            "var", "fin", "func", "hook", "test",
-            "enum", "slot", "pack", "impl",
-            "infx", "deco", "scope", "package", "use",
-            "typealias", "spec", "type", "let",
-            "prop", "oper", "ctor", "dtor",
-            "solo", "wrap", "bridge",
-            "task", "flow",
-            "fail",
-        )
+        private val DECLARATION_KEYWORDS = AzoraLanguageFacts.declarationKeywords
 
         /** Keywords that control execution flow (branching, looping, error handling, concurrency). */
-        private val CONTROL_KEYWORDS = setOf(
-            "if", "else", "for", "loop", "while",
-            "in", "when", "return", "break", "continue",
-            "as", "is",
-            "try", "catch", "defer",
-            "launch", "async", "await", "suspend", "yield",
-            "flip", "flop", "by", "with",
-            "each", "where",
-            "assert", "trace",
-            "platform",
-        )
+        private val CONTROL_KEYWORDS = AzoraLanguageFacts.controlKeywords
 
         /** Keywords that modify visibility, mutability, or other declaration properties. */
-        private val MODIFIER_KEYWORDS = setOf(
-            "expose", "confine",
-            "inline",
-            "mut", "ref",
-            "isolated", "threadlocal",
-            "lazy", "bind",
-            "inject",
-        )
+        private val MODIFIER_KEYWORDS = AzoraLanguageFacts.modifierKeywords
 
         /** Keywords related to manual memory management and unsafe operations. */
-        private val MEMORY_KEYWORDS = setOf(
-            "alloc", "drop",
-            "unsafe", "region",
-        )
+        private val MEMORY_KEYWORDS = AzoraLanguageFacts.memoryKeywords
 
         /** Keywords for Azora's reactive/UI programming model. */
-        private val REACTIVE_KEYWORDS = setOf(
-            "rem", "view", "effect",
-        )
+        private val REACTIVE_KEYWORDS = AzoraLanguageFacts.reactiveKeywords
 
         /** Literal value keywords: `true`, `false`, `null`. */
-        private val LITERAL_KEYWORDS = setOf("true", "false", "null")
+        private val LITERAL_KEYWORDS = AzoraLanguageFacts.literalKeywords
 
         /** Special implicit identifiers: `self`, `it`, `out`. */
-        private val SPECIAL_KEYWORDS = setOf("self", "it", "out")
+        private val SPECIAL_KEYWORDS = AzoraLanguageFacts.specialKeywords
+
+        private val SOFT_KEYWORDS = AzoraLanguageFacts.softKeywords
+
+        private val DECLARATION_NAME_PREFIXES = setOf(
+            "func", "task", "flow", "pack", "enum", "slot", "fail",
+            "spec", "zone", "module", "prop", "var", "fin", "typealias",
+            "test", "hook", "deco", "infx",
+        )
 
         /**
          * Maps every Azora keyword string to its corresponding [IElementType].
@@ -506,13 +528,13 @@ class AzoraLexerAdapter : LexerBase() {
          * Used by [tokenize] to classify identifier tokens as keywords.
          */
         private val KEYWORD_MAP: Map<String, IElementType> = buildMap {
-            for (kw in DECLARATION_KEYWORDS) put(kw, AzoraTokenTypes.DECLARATION_KEYWORD)
-            for (kw in CONTROL_KEYWORDS) put(kw, AzoraTokenTypes.CONTROL_KEYWORD)
-            for (kw in MODIFIER_KEYWORDS) put(kw, AzoraTokenTypes.MODIFIER_KEYWORD)
-            for (kw in MEMORY_KEYWORDS) put(kw, AzoraTokenTypes.MEMORY_KEYWORD)
-            for (kw in REACTIVE_KEYWORDS) put(kw, AzoraTokenTypes.REACTIVE_KEYWORD)
-            for (kw in LITERAL_KEYWORDS) put(kw, AzoraTokenTypes.KEYWORD)
-            for (kw in SPECIAL_KEYWORDS) put(kw, AzoraTokenTypes.KEYWORD)
+            for (kw in DECLARATION_KEYWORDS - SOFT_KEYWORDS) put(kw, AzoraTokenTypes.DECLARATION_KEYWORD)
+            for (kw in CONTROL_KEYWORDS - SOFT_KEYWORDS) put(kw, AzoraTokenTypes.CONTROL_KEYWORD)
+            for (kw in MODIFIER_KEYWORDS - SOFT_KEYWORDS) put(kw, AzoraTokenTypes.MODIFIER_KEYWORD)
+            for (kw in MEMORY_KEYWORDS - SOFT_KEYWORDS) put(kw, AzoraTokenTypes.MEMORY_KEYWORD)
+            for (kw in REACTIVE_KEYWORDS - SOFT_KEYWORDS) put(kw, AzoraTokenTypes.REACTIVE_KEYWORD)
+            for (kw in LITERAL_KEYWORDS - SOFT_KEYWORDS) put(kw, AzoraTokenTypes.KEYWORD)
+            for (kw in SPECIAL_KEYWORDS - SOFT_KEYWORDS) put(kw, AzoraTokenTypes.KEYWORD)
         }
     }
 }

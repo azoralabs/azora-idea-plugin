@@ -107,9 +107,8 @@ class AzoraColorSettingsPage : ColorSettingsPage {
         private val DEMO_TEXT = """
             package example.app
 
-            use scope std
-            use std.os
-            use std.gfx
+            use std.{math, container, concurrency}
+            use std.io
             use pages.*
 
             // -------------------------------------------------------
@@ -177,7 +176,7 @@ class AzoraColorSettingsPage : ColorSettingsPage {
             // Scopes
             // -------------------------------------------------------
 
-            scope MathUtils {
+            friend zone std::math {
                 func square(n: Int): Int {
                     return n * n
                 }
@@ -197,7 +196,7 @@ class AzoraColorSettingsPage : ColorSettingsPage {
                 func display(): String
             }
 
-            func<T> printAll(items: [T]): Unit where each T: Printable {
+            func<T> printAll(items: List<T>): Unit where each T: Printable {
                 for item in items {
                     println(item.display())
                 }
@@ -230,12 +229,14 @@ class AzoraColorSettingsPage : ColorSettingsPage {
             }
 
             // -------------------------------------------------------
-            // Views, rem, and effect (Reactive UI)
+            // Views, mem/rem/ret, and effect (Reactive UI)
             // -------------------------------------------------------
 
             @Entry
             view CounterApp() {
                 rem count = 0
+                mem session = CounterSession()
+                ret renderer = CounterRenderer()
                 rem label = "Clicks"
 
                 effect {
@@ -292,12 +293,12 @@ class AzoraColorSettingsPage : ColorSettingsPage {
             }
 
             // -------------------------------------------------------
-            // Memory: alloc, drop, unsafe, region
+            // Memory: alloc, drop, unsafe, zone
             // -------------------------------------------------------
 
             func lowLevel() {
-                region scratch {
-                    fin buf = alloc [Byte](1024)
+                zone scratch {
+                    fin buf = alloc Byte(1024)
                     unsafe {
                         buf[0] = 0xFF as Byte
                     }
@@ -377,7 +378,7 @@ class AzoraColorSettingsPage : ColorSettingsPage {
 
             func loadConfig(path: String): String fail NetworkError {
                 if path == "" {
-                    return fail .NotFound
+                    fail return .NotFound
                 }
                 return try readFile(path) catch "default"
             }
