@@ -24,6 +24,9 @@ import com.intellij.execution.runners.ExecutionEnvironment
 import com.intellij.openapi.project.Project
 import java.io.File
 
+/** Execution targets backed by the new compiler's codegen backends (+ interpreter). */
+private val SUPPORTED_RUN_TARGETS = setOf("interpret", "web-js", "web-wasm", "native")
+
 /**
  * Persistent options for [AzoraRunConfiguration].
  *
@@ -78,7 +81,8 @@ class AzoraRunConfiguration(
      * Validates the configuration before execution.
      *
      * @throws RuntimeConfigurationError if the file path is empty, the file does not exist,
-     *   or the Azora SDK `bin/azora` binary is not found.
+     *   the target is not supported by the current compiler, or the Azora SDK
+     *   `bin/azora` / `bin/azora-build` binaries are not found.
      */
     override fun checkConfiguration() {
         if (filePath.isEmpty()) {
@@ -87,10 +91,23 @@ class AzoraRunConfiguration(
         if (!File(filePath).exists()) {
             throw RuntimeConfigurationError("Azora file does not exist: $filePath")
         }
+        // Only interpret/web-js/web-wasm/native are backed by the new compiler; reject
+        // stale targets up front for a clear IDE error instead of a runtime crash.
+        if (target !in SUPPORTED_RUN_TARGETS) {
+            throw RuntimeConfigurationError(
+                "Target '$target' is not supported by the current compiler. " +
+                    "Use one of: ${SUPPORTED_RUN_TARGETS.joinToString()}."
+            )
+        }
         val sdkPath = AzoraSdkSettings.getInstance().sdkPath()
-        val azoraBin = File(sdkPath, "bin/azora")
-        if (!azoraBin.exists()) {
+        if (!File(sdkPath, "bin/azora").exists()) {
             throw RuntimeConfigurationError("Azora SDK not found at '$sdkPath'. bin/azora missing.")
+        }
+        if (!File(sdkPath, "bin/azora-build").exists()) {
+            throw RuntimeConfigurationError(
+                "Azora build tool not found at '$sdkPath'. bin/azora-build missing — " +
+                    "run the SDK installer (./install.sh)."
+            )
         }
     }
 
@@ -114,19 +131,28 @@ class AzoraRunConfiguration(
             override fun startProcess(): OSProcessHandler {
                 val sdkPath = AzoraSdkSettings.getInstance().sdkPath()
                 val basePath = project.basePath ?: ""
-
                 val buildBin = File(sdkPath, "bin/azora-build").absolutePath
 
-                // For compile targets: build first (to produce output files), then run
-                // For interpret: just run
-                val commandLine = if (target != "interpret") {
-                    GeneralCommandLine("sh", "-c", "$buildBin build --target $target && $buildBin run --target $target")
-                        .withWorkDirectory(basePath)
-                        .withCharset(Charsets.UTF_8)
-                } else {
-                    GeneralCommandLine(buildBin, "run", "--target", target)
-                        .withWorkDirectory(basePath)
-                        .withCharset(Charsets.UTF_8)
+                val file = File(filePath)
+                val fileDir = file.absoluteFile.parentFile?.absolutePath ?: basePath
+                val projectMode = File(basePath, "azora.toml").exists()
+
+                // `interpret` always runs the single selected file (passing its path so
+                // azora-build reads it directly). Other targets use project mode when an
+                // azora.toml is present, otherwise build the single file in place.
+                val commandLine = when {
+                    target == "interpret" ->
+                        GeneralCommandLine(buildBin, "run", "--target", "interpret", filePath)
+                            .withWorkDirectory(fileDir)
+                            .withCharset(Charsets.UTF_8)
+                    projectMode ->
+                        GeneralCommandLine("sh", "-c", "$buildBin build --target $target && $buildBin run --target $target")
+                            .withWorkDirectory(basePath)
+                            .withCharset(Charsets.UTF_8)
+                    else ->
+                        GeneralCommandLine(buildBin, "build", "--target", target, filePath)
+                            .withWorkDirectory(fileDir)
+                            .withCharset(Charsets.UTF_8)
                 }
 
                 val handler = ProcessHandlerFactory.getInstance().createColoredProcessHandler(commandLine)
