@@ -377,9 +377,30 @@ class AzoraSymbolService {
         .filter { it != "std" }
         .associateBy({ it.substringAfterLast('.') }, { it })
 
-    private data class StdlibIndex(val signature: String, val byModule: Map<String, List<SymbolInfo>>)
+    private data class StdlibIndex(
+        val signature: String,
+        val byModule: Map<String, List<SymbolInfo>>,
+        val infixNames: Set<String>,
+    )
 
     @Volatile private var stdlibCache: StdlibIndex? = null
+
+    /** `meta .Infix("op")` operator name pattern (value/type infix macros). */
+    private val infixMetaRegex = Regex("""meta\s*\.Infix\s*\(\s*"([^"]+)"""")
+
+    /**
+     * Infix operator names visible when editing [filePath]: the built-in infix
+     * operators, any `meta .Infix("op")` declared in [content], and the stdlib's.
+     * Used to color `a op b` operators as macros (purple).
+     */
+    fun infixOperatorNames(filePath: String, content: String): Set<String> {
+        val names = linkedSetOf("with", "by", "reverse")
+        infixMetaRegex.findAll(content).forEach { names.add(it.groupValues[1].removeSuffix("!")) }
+        // Ensure the stdlib scan has run and merge its infix names.
+        stdlibByModule()
+        stdlibCache?.infixNames?.let { names.addAll(it) }
+        return names
+    }
 
     /** Locates the stdlib source directory under the configured SDK, or null. */
     private fun stdlibRoot(): File? {
@@ -399,13 +420,15 @@ class AzoraSymbolService {
         stdlibCache?.let { if (it.signature == signature) return it.byModule }
 
         val byModule = LinkedHashMap<String, MutableList<SymbolInfo>>()
+        val infixNames = linkedSetOf<String>()
         for (f in files) {
             val text = runCatching { f.readText() }.getOrNull() ?: continue
+            infixMetaRegex.findAll(text).forEach { infixNames.add(it.groupValues[1].removeSuffix("!")) }
             val module = moduleOf(text) ?: continue
             val decls = flattenStdlibDecls(extractSymbols(text, f.path))
             byModule.getOrPut(module) { mutableListOf() }.addAll(decls)
         }
-        stdlibCache = StdlibIndex(signature, byModule)
+        stdlibCache = StdlibIndex(signature, byModule, infixNames)
         return byModule
     }
 

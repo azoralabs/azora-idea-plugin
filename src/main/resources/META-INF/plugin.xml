@@ -1,7 +1,7 @@
 <idea-plugin>
     <id>com.azora.lang.idea</id>
     <name>Azora Language</name>
-    <version>0.0.3</version>
+    <version>0.0.4</version>
     <vendor email="support@azora.dev" url="https://azora.dev">AzoraTech</vendor>
     <description><![CDATA[
         Full language support for the <b>Azora</b> programming language.
@@ -64,6 +64,11 @@
         <externalAnnotator
             language="Azora"
             implementationClass="com.azora.lang.idea.annotator.AzoraExternalAnnotator"/>
+
+        <!-- Semantic highlighting: color infix macro operators (a op b) as macros -->
+        <annotator
+            language="Azora"
+            implementationClass="com.azora.lang.idea.annotator.AzoraInfixMacroAnnotator"/>
 
         <!-- Brace Matching -->
         <lang.braceMatcher

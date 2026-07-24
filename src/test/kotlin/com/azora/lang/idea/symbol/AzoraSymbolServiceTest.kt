@@ -298,6 +298,26 @@ class AzoraSymbolServiceTest {
         assertTrue(members.isEmpty() || members.any { it.name == "abs" })
     }
 
+    // ── Infix macro operator names ─────────────────────────────────────
+
+    @Test
+    fun `infix operator names include builtins and file-declared meta Infix`() {
+        val source = """
+            meta .Infix("combine") {
+                ${'$'}a ${'$'}b => c(${'$'}a, ${'$'}b)
+            }
+            meta .Infix("to!") {
+                ${'$'}a ${'$'}b => e(${'$'}a, ${'$'}b)
+            }
+        """.trimIndent()
+        val names = service.infixOperatorNames("infix.az", source)
+        assertTrue(names.contains("with"), "built-in 'with' should be an infix operator")
+        assertTrue(names.contains("by"))
+        assertTrue(names.contains("reverse"))
+        assertTrue(names.contains("combine"), "user-declared 'combine' should be recognized")
+        assertTrue(names.contains("to"), "mutable-suffixed name should strip the trailing '!'")
+    }
+
     // ── Cache behavior ─────────────────────────────────────────────────
 
     @Test
