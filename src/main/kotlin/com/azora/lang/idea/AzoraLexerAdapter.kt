@@ -265,7 +265,12 @@ class AzoraLexerAdapter : LexerBase() {
                     val start = pos
                     while (pos < len && (source[pos].isLetterOrDigit() || source[pos] == '_' || source[pos] == '$')) pos++
                     val word = source.substring(start, pos)
-                    val type = classifyWord(source, start, pos, word)
+                    // A macro invocation `name@(…/[…/{…` or the mutable `name!@…`
+                    // colors the name as a MACRO (purple).
+                    val macroInvoke = source.getOrNull(pos) == '@' &&
+                        source.getOrNull(pos + 1).let { it == '(' || it == '[' || it == '{' } ||
+                        source.getOrNull(pos) == '!' && source.getOrNull(pos + 1) == '@'
+                    val type = if (macroInvoke) AzoraTokenTypes.MACRO else classifyWord(source, start, pos, word)
                     result.add(LexToken(type, start + startOffset, pos + startOffset))
                 }
 
@@ -459,9 +464,10 @@ class AzoraLexerAdapter : LexerBase() {
         return when (word) {
             "friend" -> if (next == "zone") AzoraTokenTypes.MODIFIER_KEYWORD else null
             "where" -> if (previous != null) AzoraTokenTypes.CONTROL_KEYWORD else null
-            "with", "by", "reverse", "each" -> if (previous != null) AzoraTokenTypes.CONTROL_KEYWORD else null
+            // Infix operators (`a with b`, `a by b`, `a reverse b`) — like any infix
+            // macro, colored as a macro (purple) when used in operator position.
+            "with", "by", "reverse" -> if (previous != null) AzoraTokenTypes.MACRO else null
             "out" -> if (nextChar == '{') AzoraTokenTypes.CONTROL_KEYWORD else null
-            "base" -> AzoraTokenTypes.KEYWORD
             else -> null
         }
     }
@@ -517,8 +523,8 @@ class AzoraLexerAdapter : LexerBase() {
 
         private val DECLARATION_NAME_PREFIXES = setOf(
             "func", "task", "flow", "pack", "enum", "slot", "fail",
-            "spec", "zone", "module", "prop", "var", "fin", "typealias",
-            "test", "hook", "deco", "infx",
+            "spec", "zone", "module", "prop", "var", "fin", "let", "typealias",
+            "test", "deco", "impl", "type",
         )
 
         /**

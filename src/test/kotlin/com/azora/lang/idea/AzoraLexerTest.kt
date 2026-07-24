@@ -77,7 +77,7 @@ class AzoraLexerTest {
 
     @Test
     fun `modifier keywords are classified correctly`() {
-        val keywords = listOf("expose", "confine", "mut", "ref", "inline")
+        val keywords = listOf("expose", "confine", "protect", "shield", "inline")
         for (kw in keywords) {
             val tokens = tokenizeFiltered(kw)
             assertEquals(1, tokens.size, "Expected 1 token for '$kw'")
@@ -109,7 +109,7 @@ class AzoraLexerTest {
 
     @Test
     fun `reactive keywords are classified correctly`() {
-        val keywords = listOf("mem", "rem", "ret", "view", "effect")
+        val keywords = listOf("mem", "rem", "ret", "effect")
         for (kw in keywords) {
             val tokens = tokenizeFiltered(kw)
             assertEquals(1, tokens.size, "Expected 1 token for '$kw'")

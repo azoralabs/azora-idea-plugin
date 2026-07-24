@@ -78,6 +78,7 @@ class AzoraSyntaxHighlighter : SyntaxHighlighterBase() {
             // Operators and punctuation
             AzoraTokenTypes.OPERATOR -> OPERATOR_KEYS
             AzoraTokenTypes.DECORATOR -> DECORATOR_KEYS
+            AzoraTokenTypes.MACRO -> MACRO_KEYS
             AzoraTokenTypes.L_PAREN, AzoraTokenTypes.R_PAREN -> PAREN_KEYS
             AzoraTokenTypes.L_BRACE, AzoraTokenTypes.R_BRACE -> BRACE_KEYS
             AzoraTokenTypes.L_BRACKET, AzoraTokenTypes.R_BRACKET -> BRACKET_KEYS
@@ -149,8 +150,17 @@ class AzoraSyntaxHighlighter : SyntaxHighlighterBase() {
         /** Text attributes for operators (`+`, `-`, `==`, etc.). */
         val OPERATOR = createTextAttributesKey("AZORA_OPERATOR", DefaultLanguageHighlighterColors.OPERATION_SIGN)
 
-        /** Text attributes for decorators/annotations (`@entry`, `@test`). */
+        /** Text attributes for decorators/annotations (`@Entry`, `@Test`). */
         val DECORATOR = createTextAttributesKey("AZORA_DECORATOR", DefaultLanguageHighlighterColors.METADATA)
+
+        /** Text attributes for macros — prefix (`vec@[…]`) and infix (`a with b`).
+         *  Defaults to a purple tone; user-overridable in the color settings page. */
+        val MACRO = createTextAttributesKey(
+            "AZORA_MACRO",
+            com.intellij.openapi.editor.markup.TextAttributes(
+                java.awt.Color(0x9C27B0), null, null, null, java.awt.Font.PLAIN
+            )
+        )
 
         /** Text attributes for parentheses `()`. */
         val PAREN = createTextAttributesKey("AZORA_PAREN", DefaultLanguageHighlighterColors.PARENTHESES)
@@ -211,6 +221,8 @@ class AzoraSyntaxHighlighter : SyntaxHighlighterBase() {
         private val OPERATOR_KEYS = arrayOf(OPERATOR)
         /** Highlight keys for decorators. */
         private val DECORATOR_KEYS = arrayOf(DECORATOR)
+        /** Highlight keys for macros (prefix and infix). */
+        private val MACRO_KEYS = arrayOf(MACRO)
         /** Highlight keys for parentheses. */
         private val PAREN_KEYS = arrayOf(PAREN)
         /** Highlight keys for curly braces. */

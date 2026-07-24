@@ -17,12 +17,12 @@
 package com.azora.lang.idea.symbol
 
 import com.azora.lang.idea.AzoraFileType
-import com.azora.lang.idea.AzoraLanguageFacts
-import com.azora.lang.idea.StdSymbol
+import com.azora.lang.idea.project.AzoraSdkSettings
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.project.Project
 import com.intellij.psi.search.FileTypeIndex
 import com.intellij.psi.search.GlobalSearchScope
+import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -363,101 +363,130 @@ class AzoraSymbolService {
         }
     }
 
-    private fun stdMembersForPath(path: List<String>): List<SymbolInfo>? {
-        val joined = path.joinToString(".")
-        val normalized = AzoraLanguageFacts.stdAliases[joined] ?: joined
-        val modulePath = when {
-            normalized == "std" -> "std"
-            normalized.startsWith("std.") -> normalized
-            AzoraLanguageFacts.stdAliases.containsKey(path.firstOrNull()) -> {
-                val aliasRoot = AzoraLanguageFacts.stdAliases[path.first()] ?: return null
-                (listOf(aliasRoot) + path.drop(1)).joinToString(".")
-            }
-            else -> return null
-        }
+    // ── Real stdlib indexing (no hardcoded symbols) ─────────────────────
+    //
+    // The standard library is discovered from the configured SDK's on-disk
+    // sources and parsed with the same extractor used for project files, so
+    // completion/navigation/hover always reflect the installed stdlib.
 
-        val children = AzoraLanguageFacts.stdChildren(modulePath)
-        if (children.isEmpty()) return null
-        val modulePrefix = if (modulePath == "std") "std" else modulePath
-        return children.map { child ->
-            val childModule = "$modulePrefix.$child"
-            val stdSymbol = AzoraLanguageFacts.stdSymbols.find { it.module == modulePath && it.name == child }
-            if (stdSymbol != null) {
-                stdSymbol.toSymbolInfo()
-            } else {
-                SymbolInfo(
-                    name = child,
-                    kind = SymbolKind.SCOPE,
-                    type = childModule,
-                    filePath = "<stdlib>",
-                    documentation = "Stdlib module `$childModule`."
-                )
-            }
+    /** All stdlib module names discovered from the installed SDK (e.g. `std.math`). */
+    fun stdModuleNames(): List<String> = stdlibByModule().keys.sorted()
+
+    /** Short aliases (last path segment) for each stdlib module, usable after import. */
+    fun stdModuleAliases(): Map<String, String> = stdlibByModule().keys
+        .filter { it != "std" }
+        .associateBy({ it.substringAfterLast('.') }, { it })
+
+    private data class StdlibIndex(val signature: String, val byModule: Map<String, List<SymbolInfo>>)
+
+    @Volatile private var stdlibCache: StdlibIndex? = null
+
+    /** Locates the stdlib source directory under the configured SDK, or null. */
+    private fun stdlibRoot(): File? {
+        val sdk = runCatching { AzoraSdkSettings.getInstance().sdkPath() }.getOrNull() ?: return null
+        return listOf("Internal/Std", "std", "lib/std", "src/std")
+            .map { File(sdk, it) }
+            .firstOrNull { it.isDirectory }
+    }
+
+    /** module path (`std.math`) → its declared symbols, scanned + cached from the SDK. */
+    private fun stdlibByModule(): Map<String, List<SymbolInfo>> {
+        val root = stdlibRoot() ?: return emptyMap()
+        val files = runCatching {
+            root.walkTopDown().filter { it.isFile && it.extension == "az" }.toList()
+        }.getOrNull() ?: return emptyMap()
+        val signature = root.path + "|" + files.size + "|" + files.sumOf { it.lastModified() }
+        stdlibCache?.let { if (it.signature == signature) return it.byModule }
+
+        val byModule = LinkedHashMap<String, MutableList<SymbolInfo>>()
+        for (f in files) {
+            val text = runCatching { f.readText() }.getOrNull() ?: continue
+            val module = moduleOf(text) ?: continue
+            val decls = flattenStdlibDecls(extractSymbols(text, f.path))
+            byModule.getOrPut(module) { mutableListOf() }.addAll(decls)
         }
+        stdlibCache = StdlibIndex(signature, byModule)
+        return byModule
+    }
+
+    /** The declared module of a file (`module a.b.c` / `export module a.b`). */
+    private fun moduleOf(text: String): String? = text.lineSequence()
+        .map { it.trim() }
+        .firstOrNull { it.startsWith("module ") || it.startsWith("export module ") }
+        ?.removePrefix("export ")?.removePrefix("module ")?.trim()
+        ?.substringBefore(' ')?.substringBefore('/')?.takeIf { it.isNotEmpty() }
+
+    /** Collects the referenceable declarations of a stdlib file, descending into
+     *  `friend zone` scopes (where most stdlib symbols live). */
+    private fun flattenStdlibDecls(symbols: List<SymbolInfo>): List<SymbolInfo> {
+        val out = mutableListOf<SymbolInfo>()
+        for (s in symbols) {
+            if (s.kind == SymbolKind.SCOPE) out.addAll(flattenStdlibDecls(s.members))
+            else out.add(s)
+        }
+        return out.distinctBy { it.name + ":" + it.kind }
+    }
+
+    /** Modules directly nested under [modulePath] (`std` → `std.math`, `std.io`, …). */
+    private fun stdlibChildModules(modulePath: String): List<String> = stdlibByModule().keys
+        .mapNotNull { m ->
+            if (m == modulePath || !m.startsWith("$modulePath.")) null
+            else m.removePrefix("$modulePath.").substringBefore(".")
+        }
+        .distinct()
+
+    /** Resolves a `.`/`::` path to the members of the stdlib module it names. */
+    private fun stdMembersForPath(path: List<String>): List<SymbolInfo>? {
+        val byModule = stdlibByModule()
+        if (byModule.isEmpty()) return null
+        // Accept the full dotted path, a short alias (`math` → `std.math`), or the
+        // root `std`. A module's short (last) segment is a usable alias after import.
+        val joined = path.joinToString(".")
+        val modulePath = when {
+            joined == "std" || byModule.containsKey(joined) -> joined
+            else -> byModule.keys.firstOrNull { it.substringAfterLast('.') == path.firstOrNull() }
+                ?.let { (listOf(it) + path.drop(1)).joinToString(".") }
+                ?: return null
+        }
+        val members = byModule[modulePath].orEmpty()
+        val childScopes = stdlibChildModules(modulePath).map { child ->
+            SymbolInfo(
+                name = child, kind = SymbolKind.SCOPE, type = "$modulePath.$child",
+                filePath = "<stdlib>", documentation = "Stdlib module `$modulePath.$child`."
+            )
+        }
+        val all = members + childScopes
+        return all.ifEmpty { null }
     }
 
     private fun stdlibSymbols(): List<SymbolInfo> {
-        val symbolsByModule = AzoraLanguageFacts.stdSymbols.groupBy { it.module }
-        val moduleScopes = AzoraLanguageFacts.stdModules
-            .filter { it != "std" }
-            .map { module ->
-                val shortName = module.substringAfterLast(".")
-                SymbolInfo(
-                    name = module,
-                    kind = SymbolKind.SCOPE,
-                    members = symbolsByModule[module].orEmpty().map { it.toSymbolInfo() },
-                    filePath = "<stdlib>",
-                    documentation = "Stdlib module `$module`."
-                ) to SymbolInfo(
-                    name = shortName,
-                    kind = SymbolKind.SCOPE,
-                    type = module,
-                    members = symbolsByModule[module].orEmpty().map { it.toSymbolInfo() },
-                    filePath = "<stdlib>",
-                    documentation = "Stdlib module `$module`."
-                )
-            }
+        val byModule = stdlibByModule()
+        if (byModule.isEmpty()) return emptyList()
 
-        val root = SymbolInfo(
-            name = "std",
-            kind = SymbolKind.SCOPE,
-            members = moduleScopes.map { it.second },
-            filePath = "<stdlib>",
-            documentation = "Azora standard library root zone."
-        )
-
-        val aliases = AzoraLanguageFacts.stdAliases.map { (alias, module) ->
+        // Per-module scope, once under its full path and once under its short alias.
+        val moduleScopes = byModule.keys.filter { it != "std" }.map { module ->
+            val members = byModule[module].orEmpty()
+            val shortName = module.substringAfterLast('.')
             SymbolInfo(
-                name = alias,
-                kind = SymbolKind.SCOPE,
-                type = module,
-                members = symbolsByModule[module].orEmpty().map { it.toSymbolInfo() },
-                filePath = "<stdlib>",
-                documentation = "Alias for `$module` when imported from stdlib."
+                name = module, kind = SymbolKind.SCOPE, members = members,
+                filePath = "<stdlib>", documentation = "Stdlib module `$module`."
+            ) to SymbolInfo(
+                name = shortName, kind = SymbolKind.SCOPE, type = module, members = members,
+                filePath = "<stdlib>", documentation = "Stdlib module `$module`."
             )
         }
 
-        val directStdSymbols = AzoraLanguageFacts.stdSymbols.map { it.toSymbolInfo() }
-        return listOf(root) + moduleScopes.flatMap { listOf(it.first, it.second) } + aliases + directStdSymbols
-    }
-
-    private fun StdSymbol.toSymbolInfo(): SymbolInfo {
-        val kind = when (kind) {
-            "func" -> SymbolKind.FUNC
-            "pack" -> SymbolKind.PACK
-            "slot" -> SymbolKind.SLOT
-            "spec" -> SymbolKind.SPEC
-            "prop" -> SymbolKind.PROPERTY
-            "fin" -> SymbolKind.FIN
-            else -> SymbolKind.FUNC
-        }
-        return SymbolInfo(
-            name = name,
-            kind = kind,
-            type = detail,
-            filePath = "<stdlib>",
-            documentation = "`${module.replace(".", "::")}::$name` - $detail"
+        val root = SymbolInfo(
+            name = "std", kind = SymbolKind.SCOPE,
+            members = (byModule["std"].orEmpty()) + stdlibChildModules("std").map {
+                SymbolInfo(it, SymbolKind.SCOPE, type = "std.$it", filePath = "<stdlib>")
+            },
+            filePath = "<stdlib>", documentation = "Azora standard library root zone."
         )
+
+        // Flat symbols so `std::name` and post-import bare names complete directly.
+        val flat = byModule.values.flatten()
+        return listOf(root) + moduleScopes.flatMap { listOf(it.first, it.second) } + flat
     }
 
     // -----------------------------------------------------------------------

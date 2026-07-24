@@ -82,6 +82,9 @@ class AzoraColorSettingsPage : ColorSettingsPage {
             AttributesDescriptor("Comments//Block comment", AzoraSyntaxHighlighter.BLOCK_COMMENT),
             AttributesDescriptor("Comments//Doc comment", AzoraSyntaxHighlighter.DOC_COMMENT),
 
+            // Macros
+            AttributesDescriptor("Macros//Macro (prefix & infix)", AzoraSyntaxHighlighter.MACRO),
+
             // Operators and punctuation
             AttributesDescriptor("Operators and Punctuation//Operator", AzoraSyntaxHighlighter.OPERATOR),
             AttributesDescriptor("Operators and Punctuation//Decorator", AzoraSyntaxHighlighter.DECORATOR),

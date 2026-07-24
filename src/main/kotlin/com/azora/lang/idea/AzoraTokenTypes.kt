@@ -142,8 +142,14 @@ object AzoraTokenTypes {
 
     // ── Decorator ──────────────────────────────────────────────────────
 
-    /** A decorator/annotation, e.g. `@entry`, `@test`. */
+    /** A decorator/annotation, e.g. `@Entry`, `@Test`. */
     @JvmField val DECORATOR = AzoraTokenType("DECORATOR")
+
+    // ── Macro ──────────────────────────────────────────────────────────
+
+    /** A macro name/operator: prefix `vec@[…]`, mutable `vec!@[…]`, or an infix
+     *  operator (`a with b`, `a to b`). Highlighted in a distinct (purple) color. */
+    @JvmField val MACRO = AzoraTokenType("MACRO")
 
     // ── Newline ────────────────────────────────────────────────────────
 

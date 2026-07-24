@@ -232,7 +232,7 @@ class AzoraCompletionContributor : CompletionContributor() {
             importPrefix: String,
             result: CompletionResultSet
         ) {
-            addStdImportCompletions(importPrefix, result)
+            addStdImportCompletions(symbolService, importPrefix, result)
 
             val allSymbols = symbolService.getAllVisibleSymbols(project, filePath, source)
             val scopes = allSymbols.filter { it.kind == SymbolKind.SCOPE }
@@ -261,11 +261,20 @@ class AzoraCompletionContributor : CompletionContributor() {
             }
         }
 
-        private fun addStdImportCompletions(importPrefix: String, result: CompletionResultSet) {
+        private fun addStdImportCompletions(
+            symbolService: AzoraSymbolService,
+            importPrefix: String,
+            result: CompletionResultSet
+        ) {
+            // Module names/aliases come from the installed SDK's real stdlib, not a
+            // hardcoded list, so import completion tracks whatever is installed.
+            val modules = symbolService.stdModuleNames()
+            val aliases = symbolService.stdModuleAliases()
+
             val groupedPrefix = Regex("""std\.\{([^}]*)$""").find(importPrefix)?.groupValues?.get(1)
             if (groupedPrefix != null) {
                 val typed = groupedPrefix.substringAfterLast(",").trim()
-                for ((alias, module) in AzoraLanguageFacts.stdAliases) {
+                for ((alias, module) in aliases) {
                     if (alias.startsWith(typed)) {
                         result.addElement(
                             LookupElementBuilder.create(alias)
@@ -277,8 +286,8 @@ class AzoraCompletionContributor : CompletionContributor() {
                 return
             }
 
-            val normalizedPrefix = importPrefix.substringAfter("use ").trim()
-            for (module in AzoraLanguageFacts.stdModules) {
+            val normalizedPrefix = importPrefix.substringAfter("use ").substringAfter("import ").trim()
+            for (module in modules) {
                 if (module.startsWith(normalizedPrefix) || normalizedPrefix.isBlank()) {
                     result.addElement(
                         LookupElementBuilder.create(module)
@@ -606,7 +615,8 @@ class AzoraCompletionContributor : CompletionContributor() {
             val snippets = listOf(
                 Snippet("func", "Function declaration", "func name(param: Type): ReturnType {\n    \n}"),
                 Snippet("task main", "Async entry point", "task main() {\n    fin user = await loadUser()\n    fin posts = await loadPosts()\n    render(user, posts)\n}"),
-                Snippet("view", "View component", "view Name() {\n    rem state = 0\n\n    effect {\n        \n    }\n\n    Column(modifier: Modifier.padding(16)) {\n        \n    }\n}"),
+                Snippet("meta prefix", "Prefix macro", "meta .Prefix(\"name\") {\n    [...\$items] => \n}"),
+                Snippet("meta infix", "Infix macro", "meta .Infix(\"op\") {\n    \$a \$b => \n}"),
                 Snippet("pack", "Pack (struct) declaration", "pack Name {\n    var field: Type = defaultValue\n}"),
                 Snippet("pack empty", "Empty pack declaration", "pack Name<T>"),
                 Snippet("enum", "Enum declaration", "enum Name {\n    Variant1, Variant2, Variant3\n}"),
@@ -624,7 +634,7 @@ class AzoraCompletionContributor : CompletionContributor() {
                 Snippet("impl deref", "Deref implementation", "impl deref for TypeName {\n    ref self ->\n    \n}"),
                 Snippet("impl as", "Cast implementation", "impl as TargetType for TypeName {\n    ref self ->\n    \n}"),
                 Snippet("test", "Test block", "test \"description\" {\n    \n}"),
-                Snippet("mixin", "Mixin (string to code)", "mixin \"\""),
+                Snippet("inline splice", "Splice a code string", "inline \"\""),
                 Snippet("for", "For loop", "for i in 0..n {\n    \n}"),
                 Snippet("loop iterator continue", "Iterator loop continue handler", "loop iterator continue {\n    \n}"),
                 Snippet("when", "When (pattern match)", "when value {\n    is Type -> result\n    else -> default\n}"),

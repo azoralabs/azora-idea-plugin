@@ -225,6 +225,15 @@ class AzoraExternalAnnotator : ExternalAnnotator<AzoraAnnotationInfo, AzoraAnnot
                 }
                 ch == '/' && next == '/' -> inLineComment = true
                 ch == '/' && next == '*' -> { inBlockComment = true; i++ }
+                // Char literal `'x'` / `'\n'` / `'"'` — skip it so a `"` *inside* a
+                // char literal (e.g. `if c == '"' {`) is not mistaken for a string.
+                ch == '\'' -> {
+                    i++
+                    if (i < source.length && source[i] == '\\' && i + 1 < source.length) i += 2
+                    else if (i < source.length && source[i] != '\'' && source[i] != '\n') i++
+                    // i now points at the closing quote (or past a bad literal); the
+                    // outer `i++` advances past it.
+                }
                 ch == '"' -> {
                     val startLine = line
                     i++
