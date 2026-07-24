@@ -34,6 +34,7 @@ kotlin {
 }
 
 intellijPlatform {
+    buildSearchableOptions = false
     pluginConfiguration {
         name = "Azora Language"
         version = project.version.toString()
@@ -43,11 +44,10 @@ intellijPlatform {
         }
         changeNotes = """
             <ul>
-                <li>Updated syntax support for Azora 0.0.3.</li>
-                <li>Context-aware keyword highlighting for soft keywords.</li>
-                <li>Completion for std modules, grouped imports, annotations, fields, local bindings, and snippets.</li>
-                <li>Project-aware go-to-definition and hover documentation.</li>
-                <li>Zone, task, flow, deref, contracts, and reactive keyword support.</li>
+                <li>Updated syntax support for Azora 0.0.4.</li>
+                <li>Add new snippets.</li>
+                <li>Add macro support.</li>
+                <li>Improve library loading.</li>
             </ul>
         """.trimIndent()
     }
@@ -60,11 +60,5 @@ intellijPlatform {
 tasks {
     test {
         useJUnitPlatform()
-    }
-    buildSearchableOptions {
-        enabled = false
-    }
-    prepareJarSearchableOptions {
-        enabled = false
     }
 }
