@@ -62,7 +62,7 @@ All source files must include the standard copyright header:
 
 ```
 /*
- * Copyright 2026 AzoraTech
+ * Copyright 2026 AzoraLabs
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -110,29 +110,46 @@ The build automatically detects whether Android Studio is installed locally. In 
 ## Project Structure
 
 ```
-src/main/kotlin/com/azora/lang/idea/
+src/main/kotlin/org/azora/lang/idea/
   AzoraLanguage.kt              # Language definition
   AzoraFileType.kt              # File type registration (.az)
   AzoraFile.kt                  # PSI file implementation
   AzoraTokenTypes.kt            # Token type definitions
-  AzoraLexerAdapter.kt          # Standalone lexer
+  AzoraLanguageFacts.kt         # Keyword sets, mirroring the compiler's lexer
+  AzoraLexerAdapter.kt          # Standalone lexer (strings, interpolation, macros)
   AzoraParserDefinition.kt      # Parser definition (flat PSI)
   AzoraBraceMatcher.kt          # Brace matching
   AzoraCommenter.kt             # Line/block commenting
   AzoraIcons.kt                 # Icon registry
-  annotator/                    # External annotator (error detection)
-  build/                        # Build config sync (azora.toml)
-  completion/                   # Code completion
+  annotator/                    # Diagnostics, quick fixes, semantic highlighting
+  azon/                         # The AZON data language: reader, lexer, checks
+  build/                        # Manifest reading (.azon / legacy .toml) and sync
+  completion/                   # Code completion, snippets, live-template context
   documentation/                # Quick documentation provider
   findusages/                   # Find usages provider
   folding/                      # Code folding
-  highlighting/                 # Syntax highlighting and color settings
+  formatting/                   # Code style, formatter, line indent
+  highlighting/                 # Palette, attribute keys, semantic classification
+  hints/                        # Inferred-type inlay hints
   navigation/                   # Go-to-declaration
-  project/                      # New project wizard, SDK settings, module type
-  run/                          # Run configurations and gutter icons
+  project/                      # New project wizard, templates, SDK settings
+  run/                          # Run/test configurations and gutter icons
   structure/                    # Structure view
-  symbol/                       # Symbol extraction service
+  symbol/                       # Symbol extraction, resolution, macro index
 ```
+
+### Two rules worth knowing
+
+**Nothing about a specific Azora name is hardcoded.** Keyword sets in
+`AzoraLanguageFacts` mirror the compiler's own table and are the only such list.
+The standard library, macros, modules, and types are all indexed from real `.az`
+sources. If you find yourself adding a name to a list, look for the declaration
+that should have told you instead.
+
+**Lexical decisions belong to the lexer, semantic ones to the annotator.**
+Whether `with` is a keyword or a macro cannot be decided from the characters
+alone, so `AzoraSemanticModel` decides it from position plus the macro index,
+and `AzoraSemanticAnnotator` paints the result.
 
 ## What to Work On
 

@@ -1,0 +1,258 @@
+/*
+ * Copyright 2026 AzoraLabs
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.azora.lang.idea.highlighting
+
+import org.azora.lang.idea.*
+import com.intellij.lexer.Lexer
+import com.intellij.openapi.editor.DefaultLanguageHighlighterColors
+import com.intellij.openapi.editor.colors.TextAttributesKey
+import com.intellij.openapi.editor.colors.TextAttributesKey.createTextAttributesKey
+import com.intellij.openapi.fileTypes.SyntaxHighlighterBase
+import com.intellij.psi.tree.IElementType
+
+/**
+ * [SyntaxHighlighterBase] for the Azora language.
+ *
+ * Maps each [AzoraTokenTypes] element type to one or more [TextAttributesKey]s.
+ * Every key ships an explicit default drawn from [AzoraPalette] — the same
+ * palette the Azora code playground uses — so a fresh install already looks
+ * like Azora, while remaining fully overridable in the color settings page.
+ *
+ * Purely lexical categories are resolved here. Categories that need to know
+ * what a name *means* (macros, calls, types, smart casts) are applied on top by
+ * `AzoraSemanticAnnotator`.
+ */
+class AzoraSyntaxHighlighter : SyntaxHighlighterBase() {
+
+    override fun getHighlightingLexer(): Lexer = AzoraLexerAdapter()
+
+    override fun getTokenHighlights(tokenType: IElementType?): Array<TextAttributesKey> {
+        return when (tokenType) {
+            // Keyword categories
+            AzoraTokenTypes.DECLARATION_KEYWORD -> DECLARATION_KEYWORD_KEYS
+            AzoraTokenTypes.CONTROL_KEYWORD -> CONTROL_KEYWORD_KEYS
+            AzoraTokenTypes.MODIFIER_KEYWORD -> MODIFIER_KEYWORD_KEYS
+            AzoraTokenTypes.MEMORY_KEYWORD -> MEMORY_KEYWORD_KEYS
+            AzoraTokenTypes.REACTIVE_KEYWORD -> REACTIVE_KEYWORD_KEYS
+            AzoraTokenTypes.KEYWORD -> KEYWORD_KEYS
+            AzoraTokenTypes.BOOL_LITERAL -> KEYWORD_KEYS
+
+            // Identifiers
+            AzoraTokenTypes.TYPE_PARAMETER -> TYPE_PARAMETER_KEYS
+            AzoraTokenTypes.IDENTIFIER -> IDENTIFIER_KEYS
+
+            // Literals
+            AzoraTokenTypes.INT_LITERAL, AzoraTokenTypes.REAL_LITERAL -> NUMBER_KEYS
+            AzoraTokenTypes.STRING_LITERAL, AzoraTokenTypes.RAW_STRING_LITERAL -> STRING_KEYS
+            AzoraTokenTypes.CHAR_LITERAL -> STRING_KEYS
+            AzoraTokenTypes.STRING_ESCAPE -> STRING_ESCAPE_KEYS
+            AzoraTokenTypes.INTERPOLATION_START,
+            AzoraTokenTypes.INTERPOLATION_END -> INTERPOLATION_KEYS
+
+            // Comments
+            AzoraTokenTypes.LINE_COMMENT -> LINE_COMMENT_KEYS
+            AzoraTokenTypes.BLOCK_COMMENT -> BLOCK_COMMENT_KEYS
+            AzoraTokenTypes.DOC_COMMENT -> DOC_COMMENT_KEYS
+
+            // Operators and punctuation
+            AzoraTokenTypes.OPERATOR -> OPERATOR_KEYS
+            AzoraTokenTypes.DECORATOR -> DECORATOR_KEYS
+            AzoraTokenTypes.MACRO -> MACRO_KEYS
+            AzoraTokenTypes.L_PAREN, AzoraTokenTypes.R_PAREN -> PAREN_KEYS
+            AzoraTokenTypes.L_BRACE, AzoraTokenTypes.R_BRACE -> BRACE_KEYS
+            AzoraTokenTypes.L_BRACKET, AzoraTokenTypes.R_BRACKET -> BRACKET_KEYS
+            AzoraTokenTypes.COMMA -> COMMA_KEYS
+            AzoraTokenTypes.COLON -> COLON_KEYS
+            AzoraTokenTypes.ARROW -> ARROW_KEYS
+            AzoraTokenTypes.DOT -> DOT_KEYS
+            AzoraTokenTypes.SEMICOLON -> SEMICOLON_KEYS
+
+            AzoraTokenTypes.BAD_CHARACTER -> BAD_CHAR_KEYS
+            else -> EMPTY_KEYS
+        }
+    }
+
+    companion object {
+
+        // ── Keyword categories ─────────────────────────────────────────
+
+        /** General-purpose keywords (`true`, `false`, `null`, `self`). */
+        val KEYWORD = key("AZORA_KEYWORD", AzoraPalette.bold(AzoraPalette.KEYWORD))
+
+        /** Declaration keywords (`func`, `pack`, `enum`, `slot`, `meta`, …). */
+        val DECLARATION_KEYWORD = key("AZORA_DECLARATION_KEYWORD", AzoraPalette.bold(AzoraPalette.KEYWORD))
+
+        /** Control-flow keywords (`if`, `else`, `for`, `return`, `with`, …). */
+        val CONTROL_KEYWORD = key("AZORA_CONTROL_KEYWORD", AzoraPalette.bold(AzoraPalette.KEYWORD))
+
+        /** Modifier keywords (`expose`, `confine`, `inline`, `opaque`, …). */
+        val MODIFIER_KEYWORD = key("AZORA_MODIFIER_KEYWORD", AzoraPalette.bold(AzoraPalette.KEYWORD))
+
+        /** Memory keywords (`alloc`, `drop`, `unsafe`, `deref`). */
+        val MEMORY_KEYWORD = key("AZORA_MEMORY_KEYWORD", AzoraPalette.bold(AzoraPalette.KEYWORD))
+
+        /** Reactive keywords (`mem`, `rem`, `ret`, `effect`). */
+        val REACTIVE_KEYWORD = key("AZORA_REACTIVE_KEYWORD", AzoraPalette.bold(AzoraPalette.KEYWORD))
+
+        // ── Identifiers ────────────────────────────────────────────────
+
+        /** Ordinary identifiers. */
+        val IDENTIFIER = key("AZORA_IDENTIFIER", AzoraPalette.fg(AzoraPalette.FOREGROUND))
+
+        /** Generic type parameters (`T`, `U`, …). */
+        val TYPE_PARAMETER = key("AZORA_TYPE_PARAMETER", AzoraPalette.fg(AzoraPalette.TYPE_PARAMETER))
+
+        /** Named types: packs, enums, slots, fails, specs, zones, aliases. */
+        val TYPE_NAME = key("AZORA_TYPE_NAME", AzoraPalette.fg(AzoraPalette.TYPE))
+
+        /** The name in a type declaration (`pack ‹Point›`). */
+        val TYPE_DECLARATION = key("AZORA_TYPE_DECLARATION", AzoraPalette.underlined(AzoraPalette.TYPE))
+
+        /** A called function, task or flow. */
+        val FUNCTION_CALL = key("AZORA_FUNCTION_CALL", AzoraPalette.fg(AzoraPalette.FUNCTION))
+
+        /** The name in a function declaration (`func ‹main›`). */
+        val FUNCTION_DECLARATION = key("AZORA_FUNCTION_DECLARATION", AzoraPalette.underlined(AzoraPalette.FUNCTION))
+
+        /** Function/constructor parameters. */
+        val PARAMETER = key("AZORA_PARAMETER", AzoraPalette.fg(AzoraPalette.PARAMETER))
+
+        /** Pack fields and computed properties accessed through a receiver. */
+        val FIELD = key("AZORA_FIELD", AzoraPalette.fg(AzoraPalette.FOREGROUND))
+
+        /** An identifier narrowed by a smart cast (`is` / `guard is`). */
+        val SMART_CAST = key("AZORA_SMART_CAST", AzoraPalette.background(AzoraPalette.SMART_CAST_BACKGROUND))
+
+        // ── Literals ───────────────────────────────────────────────────
+
+        /** Numeric literals. */
+        val NUMBER = key("AZORA_NUMBER", AzoraPalette.fg(AzoraPalette.FOREGROUND))
+
+        /** String and character literals. */
+        val STRING = key("AZORA_STRING", AzoraPalette.fg(AzoraPalette.STRING))
+
+        /** Escape sequences inside literals (`\n`, `\"`, `\$`). */
+        val STRING_ESCAPE = key("AZORA_STRING_ESCAPE", AzoraPalette.fg(AzoraPalette.STRING_ESCAPE))
+
+        /** The `${` / `$` / `}` that delimit a string interpolation hole. */
+        val INTERPOLATION = key("AZORA_INTERPOLATION", AzoraPalette.bold(AzoraPalette.STRING_ESCAPE))
+
+        // ── Comments ───────────────────────────────────────────────────
+
+        /** Single-line comments (`//`). */
+        val LINE_COMMENT = key("AZORA_LINE_COMMENT", AzoraPalette.italic(AzoraPalette.COMMENT))
+
+        /** Block comments. */
+        val BLOCK_COMMENT = key("AZORA_BLOCK_COMMENT", AzoraPalette.italic(AzoraPalette.COMMENT))
+
+        /** Documentation comments (`///`, `/** … */`). */
+        val DOC_COMMENT = key("AZORA_DOC_COMMENT", AzoraPalette.italic(AzoraPalette.COMMENT))
+
+        // ── Operators and punctuation ──────────────────────────────────
+
+        /** Operators (`+`, `-`, `==`, …). */
+        val OPERATOR = key("AZORA_OPERATOR", AzoraPalette.fg(AzoraPalette.FOREGROUND))
+
+        /** Decorators (`@Stable`, `@Derive`). */
+        val DECORATOR = key("AZORA_DECORATOR", AzoraPalette.fg(AzoraPalette.FUNCTION))
+
+        /**
+         * Macros — prefix (`vec@[…]`), infix (`a with b`) and type (`res T`).
+         * Applied lexically for `name@…` forms and semantically for everything
+         * else, from macros actually declared in the project or SDK.
+         */
+        val MACRO = key("AZORA_MACRO", AzoraPalette.bold(AzoraPalette.MACRO))
+
+        /** Parentheses `()`. */
+        val PAREN = key("AZORA_PAREN", AzoraPalette.fg(AzoraPalette.FOREGROUND))
+
+        /** Curly braces `{}`. */
+        val BRACE = key("AZORA_BRACE", AzoraPalette.fg(AzoraPalette.FOREGROUND))
+
+        /** Square brackets `[]`. */
+        val BRACKET = key("AZORA_BRACKET", AzoraPalette.fg(AzoraPalette.FOREGROUND))
+
+        /** Commas. */
+        val COMMA_ATTR = key("AZORA_COMMA", AzoraPalette.fg(AzoraPalette.FOREGROUND))
+
+        /** Colons. */
+        val COLON_ATTR = key("AZORA_COLON", AzoraPalette.fg(AzoraPalette.FOREGROUND))
+
+        /** Arrows (`->`, `=>`). */
+        val ARROW_ATTR = key("AZORA_ARROW", AzoraPalette.fg(AzoraPalette.FOREGROUND))
+
+        /** Dots (`.`). */
+        val DOT_ATTR = key("AZORA_DOT", AzoraPalette.fg(AzoraPalette.FOREGROUND))
+
+        /** Semicolons. */
+        val SEMICOLON_ATTR = key("AZORA_SEMICOLON", AzoraPalette.fg(AzoraPalette.FOREGROUND))
+
+        /** Unrecognized characters. */
+        val BAD_CHAR = key("AZORA_BAD_CHARACTER", AzoraPalette.underlined(AzoraPalette.INVALID))
+
+        // ── Diagnostics ────────────────────────────────────────────────
+
+        /** Wavy red underline used for errors reported by the annotator. */
+        val ERROR = key("AZORA_ERROR", AzoraPalette.wavy(AzoraPalette.ERROR))
+
+        /** Wavy yellow underline used for warnings reported by the annotator. */
+        val WARNING = key("AZORA_WARNING", AzoraPalette.wavy(AzoraPalette.WARNING))
+
+        // ── Key arrays (returned by getTokenHighlights) ────────────────
+
+        private val KEYWORD_KEYS = arrayOf(KEYWORD)
+        private val DECLARATION_KEYWORD_KEYS = arrayOf(DECLARATION_KEYWORD)
+        private val CONTROL_KEYWORD_KEYS = arrayOf(CONTROL_KEYWORD)
+        private val MODIFIER_KEYWORD_KEYS = arrayOf(MODIFIER_KEYWORD)
+        private val MEMORY_KEYWORD_KEYS = arrayOf(MEMORY_KEYWORD)
+        private val REACTIVE_KEYWORD_KEYS = arrayOf(REACTIVE_KEYWORD)
+        private val TYPE_PARAMETER_KEYS = arrayOf(TYPE_PARAMETER)
+        private val IDENTIFIER_KEYS = arrayOf(IDENTIFIER)
+        private val NUMBER_KEYS = arrayOf(NUMBER)
+        private val STRING_KEYS = arrayOf(STRING)
+        private val STRING_ESCAPE_KEYS = arrayOf(STRING_ESCAPE)
+        private val INTERPOLATION_KEYS = arrayOf(INTERPOLATION)
+        private val LINE_COMMENT_KEYS = arrayOf(LINE_COMMENT)
+        private val BLOCK_COMMENT_KEYS = arrayOf(BLOCK_COMMENT)
+        private val DOC_COMMENT_KEYS = arrayOf(DOC_COMMENT)
+        private val OPERATOR_KEYS = arrayOf(OPERATOR)
+        private val DECORATOR_KEYS = arrayOf(DECORATOR)
+        private val MACRO_KEYS = arrayOf(MACRO)
+        private val PAREN_KEYS = arrayOf(PAREN)
+        private val BRACE_KEYS = arrayOf(BRACE)
+        private val BRACKET_KEYS = arrayOf(BRACKET)
+        private val COMMA_KEYS = arrayOf(COMMA_ATTR)
+        private val COLON_KEYS = arrayOf(COLON_ATTR)
+        private val ARROW_KEYS = arrayOf(ARROW_ATTR)
+        private val DOT_KEYS = arrayOf(DOT_ATTR)
+        private val SEMICOLON_KEYS = arrayOf(SEMICOLON_ATTR)
+        private val BAD_CHAR_KEYS = arrayOf(BAD_CHAR)
+        private val EMPTY_KEYS = emptyArray<TextAttributesKey>()
+
+        /**
+         * Registers a key with an Azora-palette default. The default only
+         * applies where the active color scheme says nothing about the key, so
+         * user customizations and third-party schemes still win.
+         */
+        private fun key(name: String, defaults: com.intellij.openapi.editor.markup.TextAttributes) =
+            createTextAttributesKey(name, defaults)
+
+        /** Kept so third-party code referencing platform fallbacks still links. */
+        @Suppress("unused")
+        internal val PLATFORM_KEYWORD_FALLBACK = DefaultLanguageHighlighterColors.KEYWORD
+    }
+}

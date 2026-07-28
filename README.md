@@ -21,24 +21,44 @@
 
 ## Features
 
-- **Syntax highlighting** with semantic keyword coloring (declaration, control-flow, modifier, memory, reactive)
-- **Code completion** for keywords, symbols, dot access, scope access, pack constructors, enum/slot/fail variants, and code snippets
-- **Go-to-definition** (Ctrl+Click / Cmd+Click) for identifiers across files
-- **Quick documentation** (Ctrl+Q / F1) showing type signatures, parameters, fields, and variants
-- **Error detection** for unmatched braces and unterminated strings
-- **Brace matching** and **code folding** for declarations, comments, imports, and regions
-- **Structure view** with outline of functions, packs, enums, views, impls, tests, and more
-- **Find usages** for identifiers across the project
-- **Line and block commenting** (`//` and block comments)
-- **Run configurations** with interpret and native targets, plus a gutter run icon on `func main()`
-- **New Project wizard** with SDK path configuration and `azora.toml` scaffolding
-- **Build sync** from `azora.toml` with editor notification banners
-- **Color scheme settings** page for full customization of Azora syntax colors
+### Highlighting
+
+- **Azora's own palette**, shared with the [playground](https://code.azoralang.org): bold keywords, purple macros,
+  teal types, colored string interpolation and escapes, wavy diagnostics. Every category has a light and a dark
+  default and is overridable under **Editor | Color Scheme | Azora**.
+- **Macros are discovered, not hardcoded.** A name is a macro because some `meta` declaration in your project, the
+  SDK, or a dependency says so. That is what lets a *keyword-named* macro work correctly: `with` is a keyword in
+  `with (ctx) { … }` and a macro in `Query<Position with Velocity>`, because `azora-engine` declares
+  `$Base with $Filter` in its `meta type` block.
+- **Smart casts** are highlighted for the extent of the narrowing (`if x is T`, `guard … is T`, `when` arms).
+- **Inferred-type inlay hints**, off by default, under **Settings | Editor | Inlay Hints | Azora**.
+
+### Code intelligence
+
+- **Completion** that follows context: real members after `.` and `::`, real module paths in imports, a type's
+  fields inside its constructor call, the macros your project declares, and keywords only once you start a word.
+- **Live templates** for every declaration form in the 0.0.4 grammar (`func`, `pack`, `spec`, `meta`, `test`, …).
+- **Go-to-declaration** and **quick documentation** that scope names the way the language does — locals and
+  parameters before file declarations, members resolved against their receiver's type, imports before the rest of
+  the project. Declarations in the SDK and in path dependencies are navigable.
+- **Diagnostics** underlined on the exact text at fault, with quick fixes for module typos, unknown escapes,
+  unterminated strings and stray brackets.
+- **Structure view**, **find usages**, **folding**, **brace matching**, **commenting**, and **indentation**.
+
+### Projects and running
+
+- **`.azon` support**: syntax highlighting and validation for AZON manifests and data files, including checks that
+  declared targets exist and that dependency paths resolve.
+- **Project templates**: executable, library, and multi-module workspace, each scaffolded with AZON manifests,
+  sources, and a test block.
+- **Run gutter icons** on `func main`, `task main`, and every `test` block, plus one run configuration per target
+  declared in your manifests.
 
 ## Requirements
 
 - [IntelliJ IDEA](https://www.jetbrains.com/idea/) 2025.3+ or [Android Studio](https://developer.android.com/studio) Meerkat+
 - [Azora SDK](https://azoralang.org) installed (for run configurations)
+- Azora language 0.0.4
 
 ## Installation
 
@@ -56,20 +76,48 @@ The built plugin zip will be in `build/distributions/`. Install it via **Setting
 
 1. Install the plugin
 2. **File > New > Azora Project** (or use the New Project wizard)
-3. Set your Azora SDK path (e.g. `~/.azoralang`)
-4. Start coding in `.az` files
+3. Choose **Executable**, **Library**, or **Multi-module workspace**
+4. Set your Azora SDK path (e.g. `~/.azoralang`)
+5. Start coding in `.az` files
 
-The plugin will automatically create a `src/Main.az` entry point and an `azora.toml` project manifest. Run configurations for each target defined in `azora.toml` are created automatically.
+Run configurations are generated from the targets your manifest declares. Editing a manifest shows a banner
+offering to re-read it.
 
-## Project Structure
+## Project structure
+
+A single package:
 
 ```
 my-project/
-  azora.toml          # Project manifest (name, version, targets, entry)
+  package.azon         # name, version, kind, entry, targets, dependencies
   src/
-    Main.az            # Entry point
-    ...
+    main.az            # entry point
 ```
+
+A workspace:
+
+```
+my-workspace/
+  workspace.azon       # members
+  packages/
+    my-core/
+      package.azon     # kind: "lib"
+      src/core.az
+    my-app/
+      package.azon     # kind: "exe", depends on ../my-core
+      src/main.az
+```
+
+`dependencies` is what tells the IDE where a package's sources are, so its types, functions, and macros resolve
+across the workspace:
+
+```azon
+dependencies: {
+    my-core: { path: "../my-core" }
+}
+```
+
+Legacy `azora.toml` projects are still read.
 
 ## Links
 
@@ -86,4 +134,4 @@ my-project/
 
 Licensed under the [Apache License 2.0](LICENSE).
 
-Copyright 2026 AzoraTech.
+Copyright 2026 AzoraLabs.

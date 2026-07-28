@@ -4,8 +4,8 @@ plugins {
     id("org.jetbrains.intellij.platform") version "2.13.1"
 }
 
-group = "com.azora.lang"
-version = "0.0.4"
+group = "org.azora.lang"
+version = "0.0.5"
 
 repositories {
     mavenCentral()
@@ -30,7 +30,7 @@ dependencies {
 }
 
 kotlin {
-    jvmToolchain(17)
+    jvmToolchain(21)
 }
 
 intellijPlatform {
@@ -44,10 +44,16 @@ intellijPlatform {
         }
         changeNotes = """
             <ul>
-                <li>Updated syntax support for Azora 0.0.4.</li>
-                <li>Add new snippets.</li>
-                <li>Add macro support.</li>
-                <li>Improve library loading.</li>
+                <li>Official Azora color palette, shared with the Azora code playground, with bold keywords, purple macros and wavy diagnostics — all overridable.</li>
+                <li>Macros are now discovered from real <code>meta</code> declarations in your project and SDK: a keyword-named macro such as <code>with</code> is purple where it is a macro and a keyword everywhere else. Nothing is hardcoded.</li>
+                <li>String interpolation (<code>${'$'}name</code>, <code>${'$'}{…}</code>) and escape sequences are lexed and colored.</li>
+                <li>Member (<code>.</code>) and zone (<code>::</code>) completion resolve real fields, methods and module members.</li>
+                <li>Live templates for every Azora declaration form.</li>
+                <li>Rebuilt go-to-declaration, hover documentation and indentation.</li>
+                <li>Inferred-type inlay hints and smart-cast highlighting.</li>
+                <li>Errors are underlined with quick fixes.</li>
+                <li>Run gutter icons on <code>func main</code>, <code>task main</code> and every <code>test</code>.</li>
+                <li><code>.azon</code> file support plus lib / exe / multi-module project templates.</li>
             </ul>
         """.trimIndent()
     }

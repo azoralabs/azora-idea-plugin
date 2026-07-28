@@ -1,138 +1,185 @@
 <idea-plugin>
-    <id>com.azora.lang.idea</id>
+    <id>org.azora.lang.idea</id>
     <name>Azora Language</name>
-    <version>0.0.4</version>
-    <vendor email="support@azora.dev" url="https://azora.dev">AzoraTech</vendor>
+    <version>0.0.5</version>
+    <vendor email="support@azora.dev" url="https://azora.dev">AzoraLabs</vendor>
     <description><![CDATA[
-        Full language support for the <b>Azora</b> programming language.
+        Full language support for the <b>Azora</b> programming language (0.0.4).
 
         <ul>
-            <li>Syntax highlighting with semantic keyword coloring (declaration, control-flow, modifier, memory, reactive)</li>
-            <li>Context-aware code completion for types, functions, variables, pack fields, enum variants, zone members, std modules, and annotations</li>
-            <li>Go-to-definition (Ctrl+Click) for identifiers across files and stdlib</li>
-            <li>Quick documentation (Ctrl+Q) showing type signatures, parameters, and fields</li>
-            <li>Error and warning annotations from preprocessor, parser, and semantic analysis</li>
-            <li>Brace matching and code folding (declarations, comments, imports, and editor regions)</li>
-            <li>Structure view (outline of functions, packs, enums, views, impls, tests, etc.)</li>
-            <li>Find usages for identifiers</li>
-            <li>Line and block commenting</li>
-            <li>File templates for new .az files</li>
+            <li>Syntax highlighting in Azora's own palette — shared with the Azora code playground — with bold keywords, purple macros, colored string interpolation, and highlighted smart casts</li>
+            <li>Macros are discovered from the <code>meta</code> declarations in your project, the SDK, and your dependencies, so a keyword-named macro is purple where it is a macro and a keyword everywhere else</li>
+            <li>Context-aware completion: real members after <code>.</code> and <code>::</code>, real module paths in imports, a type's fields in its constructor call</li>
+            <li>Live templates for every Azora declaration form</li>
+            <li>Go-to-declaration and quick documentation that scope names the way the language does</li>
+            <li>Inferred-type inlay hints, toggleable per project</li>
+            <li>Errors underlined precisely, with quick fixes</li>
+            <li>Run gutter icons on <code>func main</code>, <code>task main</code>, and every <code>test</code></li>
+            <li><code>.azon</code> manifest and data file support, plus executable, library, and multi-module workspace project templates</li>
+            <li>Brace matching, folding, structure view, find usages, commenting, and indentation</li>
         </ul>
     ]]></description>
 
     <depends>com.intellij.modules.platform</depends>
 
     <extensions defaultExtensionNs="com.intellij">
-        <!-- Language -->
+        <!-- ── Azora language ──────────────────────────────────────── -->
+
         <fileType
             name="Azora"
-            implementationClass="com.azora.lang.idea.AzoraFileType"
+            implementationClass="org.azora.lang.idea.AzoraFileType"
             fieldName="INSTANCE"
             language="Azora"
             extensions="az"/>
 
         <lang.parserDefinition
             language="Azora"
-            implementationClass="com.azora.lang.idea.AzoraParserDefinition"/>
+            implementationClass="org.azora.lang.idea.AzoraParserDefinition"/>
 
-        <!-- Syntax Highlighting -->
+        <!-- Syntax highlighting -->
         <lang.syntaxHighlighterFactory
             language="Azora"
-            implementationClass="com.azora.lang.idea.highlighting.AzoraSyntaxHighlighterFactory"/>
+            implementationClass="org.azora.lang.idea.highlighting.AzoraSyntaxHighlighterFactory"/>
 
         <colorSettingsPage
-            implementation="com.azora.lang.idea.highlighting.AzoraColorSettingsPage"/>
+            implementation="org.azora.lang.idea.highlighting.AzoraColorSettingsPage"/>
 
-        <langCodeStyleSettingsProvider
-            implementation="com.azora.lang.idea.formatting.AzoraCodeStyleSettingsProvider"/>
-
-        <!-- Code Completion -->
-        <completion.contributor
-            language="Azora"
-            implementationClass="com.azora.lang.idea.completion.AzoraCompletionContributor"/>
-
-        <!-- Go to Declaration -->
-        <gotoDeclarationHandler
-            implementation="com.azora.lang.idea.navigation.AzoraGoToDeclarationHandler"/>
-
-        <!-- Documentation -->
-        <lang.documentationProvider
-            language="Azora"
-            implementationClass="com.azora.lang.idea.documentation.AzoraDocumentationProvider"/>
-
-        <!-- Annotations (errors/warnings) -->
-        <externalAnnotator
-            language="Azora"
-            implementationClass="com.azora.lang.idea.annotator.AzoraExternalAnnotator"/>
-
-        <!-- Semantic highlighting: color infix macro operators (a op b) as macros -->
+        <!-- Semantic highlighting: macros, calls, types, smart casts -->
         <annotator
             language="Azora"
-            implementationClass="com.azora.lang.idea.annotator.AzoraInfixMacroAnnotator"/>
+            implementationClass="org.azora.lang.idea.annotator.AzoraSemanticAnnotator"/>
 
-        <!-- Brace Matching -->
+        <!-- Diagnostics and quick fixes -->
+        <externalAnnotator
+            language="Azora"
+            implementationClass="org.azora.lang.idea.annotator.AzoraExternalAnnotator"/>
+
+        <!-- Formatting and indentation -->
+        <langCodeStyleSettingsProvider
+            implementation="org.azora.lang.idea.formatting.AzoraCodeStyleSettingsProvider"/>
+
+        <lang.formatter
+            language="Azora"
+            implementationClass="org.azora.lang.idea.formatting.AzoraFormattingModelBuilder"/>
+
+        <lineIndentProvider
+            implementation="org.azora.lang.idea.formatting.AzoraLineIndentProvider"/>
+
+        <!-- Completion and templates -->
+        <completion.contributor
+            language="Azora"
+            implementationClass="org.azora.lang.idea.completion.AzoraCompletionContributor"/>
+
+        <liveTemplateContext
+            contextId="Azora"
+            implementation="org.azora.lang.idea.completion.AzoraTemplateContextType"/>
+
+        <defaultLiveTemplates file="/liveTemplates/Azora.xml"/>
+
+        <!-- Navigation and documentation -->
+        <gotoDeclarationHandler
+            implementation="org.azora.lang.idea.navigation.AzoraGoToDeclarationHandler"/>
+
+        <lang.documentationProvider
+            language="Azora"
+            implementationClass="org.azora.lang.idea.documentation.AzoraDocumentationProvider"/>
+
+        <!-- Inlay hints -->
+        <codeInsight.declarativeInlayProvider
+            language="Azora"
+            providerId="azora.inferred.types"
+            bundle="messages.AzoraBundle"
+            nameKey="inlay.azora.type.hints"
+            descriptionKey="inlay.azora.type.hints.description"
+            group="TYPES_GROUP"
+            implementationClass="org.azora.lang.idea.hints.AzoraTypeHintProvider"/>
+
+        <!-- Editing -->
         <lang.braceMatcher
             language="Azora"
-            implementationClass="com.azora.lang.idea.AzoraBraceMatcher"/>
+            implementationClass="org.azora.lang.idea.AzoraBraceMatcher"/>
 
-        <!-- Commenter -->
         <lang.commenter
             language="Azora"
-            implementationClass="com.azora.lang.idea.AzoraCommenter"/>
+            implementationClass="org.azora.lang.idea.AzoraCommenter"/>
 
-        <!-- Code Folding -->
         <lang.foldingBuilder
             language="Azora"
-            implementationClass="com.azora.lang.idea.folding.AzoraFoldingBuilder"/>
+            implementationClass="org.azora.lang.idea.folding.AzoraFoldingBuilder"/>
 
-        <!-- Structure View -->
         <lang.psiStructureViewFactory
             language="Azora"
-            implementationClass="com.azora.lang.idea.structure.AzoraStructureViewFactory"/>
+            implementationClass="org.azora.lang.idea.structure.AzoraStructureViewFactory"/>
 
-        <!-- Find Usages -->
         <lang.findUsagesProvider
             language="Azora"
-            implementationClass="com.azora.lang.idea.findusages.AzoraFindUsagesProvider"/>
+            implementationClass="org.azora.lang.idea.findusages.AzoraFindUsagesProvider"/>
 
-        <!-- Symbol Service (project-level) -->
+        <!-- ── AZON: manifests and data files ──────────────────────── -->
+
+        <fileType
+            name="AZON"
+            implementationClass="org.azora.lang.idea.azon.AzonFileType"
+            fieldName="INSTANCE"
+            language="AZON"
+            extensions="azon"/>
+
+        <lang.parserDefinition
+            language="AZON"
+            implementationClass="org.azora.lang.idea.azon.AzonParserDefinition"/>
+
+        <lang.syntaxHighlighterFactory
+            language="AZON"
+            implementationClass="org.azora.lang.idea.azon.AzonSyntaxHighlighterFactory"/>
+
+        <annotator
+            language="AZON"
+            implementationClass="org.azora.lang.idea.azon.AzonAnnotator"/>
+
+        <!-- ── Project model ───────────────────────────────────────── -->
+
         <projectService
-            serviceImplementation="com.azora.lang.idea.symbol.AzoraSymbolService"/>
+            serviceImplementation="org.azora.lang.idea.symbol.AzoraSymbolService"/>
 
-        <!-- New Project Wizard -->
-        <newProjectWizard.generator
-            implementation="com.azora.lang.idea.project.AzoraNewProjectWizard"/>
-
-        <!-- Build System -->
         <projectService
-            serviceImplementation="com.azora.lang.idea.build.AzoraProjectConfigService"/>
+            serviceImplementation="org.azora.lang.idea.symbol.AzoraMacroIndex"/>
+
+        <projectService
+            serviceImplementation="org.azora.lang.idea.build.AzoraProjectConfigService"/>
 
         <postStartupActivity
-            implementation="com.azora.lang.idea.build.AzoraProjectStartupActivity"/>
+            implementation="org.azora.lang.idea.build.AzoraProjectStartupActivity"/>
 
         <editorNotificationProvider
-            implementation="com.azora.lang.idea.build.AzoraTomlSyncNotification"/>
+            implementation="org.azora.lang.idea.build.AzoraManifestSyncNotification"/>
 
-        <!-- Run Configuration -->
+        <newProjectWizard.generator
+            implementation="org.azora.lang.idea.project.AzoraNewProjectWizard"/>
+
+        <!-- ── Running and testing ─────────────────────────────────── -->
+
         <configurationType
-            implementation="com.azora.lang.idea.run.AzoraConfigurationType"/>
+            implementation="org.azora.lang.idea.run.AzoraConfigurationType"/>
+
+        <!-- Test first: a `test` gutter icon should run tests, not main. -->
+        <runConfigurationProducer
+            implementation="org.azora.lang.idea.run.AzoraRunTestProducer"/>
 
         <runConfigurationProducer
-            implementation="com.azora.lang.idea.run.AzoraRunInterpretProducer"/>
+            implementation="org.azora.lang.idea.run.AzoraRunInterpretProducer"/>
 
         <runConfigurationProducer
-            implementation="com.azora.lang.idea.run.AzoraRunNativeProducer"/>
+            implementation="org.azora.lang.idea.run.AzoraRunNativeProducer"/>
 
         <runLineMarkerContributor
             language="Azora"
-            implementationClass="com.azora.lang.idea.run.AzoraRunLineMarkerContributor"/>
+            implementationClass="org.azora.lang.idea.run.AzoraRunLineMarkerContributor"/>
     </extensions>
 
     <actions>
-        <!-- New Azora Project action: File > New and Welcome Screen -->
         <action
             id="Azora.NewProject"
-            class="com.azora.lang.idea.project.AzoraNewProjectAction"
+            class="org.azora.lang.idea.project.AzoraNewProjectAction"
             text="Azora Project"
             description="Create a new Azora project"
             icon="/icons/azora_icon.png">
