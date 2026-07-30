@@ -17,6 +17,7 @@
 package org.azora.lang.idea.highlighting
 
 import org.azora.lang.idea.AzoraTokenTypes
+import org.azora.lang.idea.AzoraLanguageFacts
 import org.azora.lang.idea.symbol.AzoraMacros
 import com.intellij.openapi.editor.colors.TextAttributesKey
 import com.intellij.psi.tree.IElementType
@@ -26,6 +27,22 @@ import com.intellij.psi.tree.IElementType
  * neighbours by index instead of walking siblings repeatedly.
  */
 data class AzoraToken(val type: IElementType, val start: Int, val end: Int, val text: String)
+
+/**
+ * Names resolved from the project, its dependencies, and the installed SDK.
+ *
+ * Keeping this input explicit lets the semantic model remain deterministic in
+ * unit tests while the IntelliJ annotator supplies the real indexed symbols.
+ */
+data class AzoraSemanticSymbols(
+    val types: Set<String> = emptySet(),
+    val specTypes: Set<String> = emptySet(),
+    val functions: Set<String> = emptySet(),
+) {
+    companion object {
+        val EMPTY = AzoraSemanticSymbols()
+    }
+}
 
 /**
  * Assigns semantic colors to a file's tokens: the categories that depend on
@@ -38,13 +55,15 @@ data class AzoraToken(val type: IElementType, val start: Int, val end: Int, val 
 object AzoraSemanticModel {
 
     /** Declaration keywords whose following name is a function-like symbol. */
-    private val FUNCTION_DECL_KEYWORDS = setOf("func", "task", "flow", "deco", "oper", "infx")
+    private val FUNCTION_DECL_KEYWORDS = setOf("func", "task", "flow", "infx")
 
     /** Declaration keywords whose following name is a type-like symbol. */
     private val TYPE_DECL_KEYWORDS = setOf(
-        "pack", "enum", "slot", "fail", "spec", "typealias", "type",
-        "wrap", "solo", "zone", "module", "impl",
+        "pack", "enum", "slot", "fail", "typealias", "type", "wrap", "solo",
     )
+
+    /** Binding declarations whose names may be dimmed when unused. */
+    private val BINDING_KEYWORDS = setOf("var", "fin", "let", "mem", "rem", "ret")
 
     /** Keywords that introduce a condition which may narrow a binding. */
     private val NARROWING_HEADS = setOf("if", "while", "guard")
@@ -57,19 +76,26 @@ object AzoraSemanticModel {
      * @return a map from token start offset to the attribute key to apply.
      *   Tokens the lexer already colors correctly are simply absent.
      */
-    fun classify(tokens: List<AzoraToken>, macros: AzoraMacros): Map<Int, TextAttributesKey> {
+    fun classify(
+        tokens: List<AzoraToken>,
+        macros: AzoraMacros,
+        symbols: AzoraSemanticSymbols = AzoraSemanticSymbols.EMPTY,
+    ): Map<Int, TextAttributesKey> {
         val result = HashMap<Int, TextAttributesKey>()
-        val names = collectDeclaredNames(tokens)
+        val semantics = collectSemantics(tokens, symbols)
 
         for (i in tokens.indices) {
             val token = tokens[i]
             val key = when {
                 isMacroUse(tokens, i, macros) -> AzoraSyntaxHighlighter.MACRO
-                token.type == AzoraTokenTypes.IDENTIFIER -> classifyIdentifier(tokens, i, names)
+                token.type == AzoraTokenTypes.TYPE_PARAMETER -> AzoraSyntaxHighlighter.TYPE_PARAMETER
+                token.type == AzoraTokenTypes.IDENTIFIER -> classifyIdentifier(tokens, i, semantics)
                 else -> null
             }
             if (key != null) result[token.start] = key
         }
+
+        applyUnusedStyles(tokens, semantics, result)
 
         for (range in smartCastRanges(tokens)) {
             for (i in range.tokenIndices) {
@@ -81,6 +107,38 @@ object AzoraSemanticModel {
         }
 
         return result
+    }
+
+    /** How a callable/property declaration participates in a spec. */
+    private enum class MemberContext { NORMAL, SPEC, OVERRIDE }
+
+    /** A declaration whose references are meaningful only inside [scope]. */
+    private data class ScopedDeclaration(
+        val name: String,
+        val tokenIndex: Int,
+        val scope: IntRange,
+        val context: MemberContext = MemberContext.NORMAL,
+    )
+
+    /** Everything learned from declaration structure before individual tokens are styled. */
+    private data class Semantics(
+        val types: Set<String>,
+        val specTypes: Set<String>,
+        val functions: Set<String>,
+        val typeDeclarations: Set<Int>,
+        val specDeclarations: Set<Int>,
+        val decoratorDeclarations: Set<Int>,
+        val functionDeclarations: List<ScopedDeclaration>,
+        val propertyDeclarations: List<ScopedDeclaration>,
+        val parameters: List<ScopedDeclaration>,
+        val variables: List<ScopedDeclaration>,
+        val modulePathTokens: Set<Int>,
+        val zoneUsageTokens: Set<Int>,
+    ) {
+        val functionByToken = functionDeclarations.associateBy { it.tokenIndex }
+        val propertyByToken = propertyDeclarations.associateBy { it.tokenIndex }
+        val parameterByToken = parameters.associateBy { it.tokenIndex }
+        val variableByToken = variables.associateBy { it.tokenIndex }
     }
 
     // ── Macros ─────────────────────────────────────────────────────────
@@ -151,47 +209,359 @@ object AzoraSemanticModel {
      * Colors a plain identifier as a declaration name, a call, or a type
      * reference. Returns `null` to leave the lexer's identifier color in place.
      */
-    private fun classifyIdentifier(
-        tokens: List<AzoraToken>,
-        index: Int,
-        declaredTypes: Set<String>,
-    ): TextAttributesKey? {
+    private fun classifyIdentifier(tokens: List<AzoraToken>, index: Int, semantics: Semantics): TextAttributesKey? {
         val token = tokens[index]
-        val prev = prevMeaningful(tokens, index, sameLine = true)?.let { tokens[it] }
         val next = nextMeaningful(tokens, index, sameLine = true)?.let { tokens[it] }
 
-        if (prev != null && AzoraTokenTypes.KEYWORDS.contains(prev.type)) {
-            if (prev.text in FUNCTION_DECL_KEYWORDS) return AzoraSyntaxHighlighter.FUNCTION_DECLARATION
-            if (prev.text in TYPE_DECL_KEYWORDS) return AzoraSyntaxHighlighter.TYPE_DECLARATION
+        if (index in semantics.modulePathTokens) return AzoraSyntaxHighlighter.MODULE_PATH
+        if (index in semantics.zoneUsageTokens) return AzoraSyntaxHighlighter.ZONE_USAGE
+        if (index in semantics.decoratorDeclarations) return AzoraSyntaxHighlighter.DECORATOR
+        if (index in semantics.specDeclarations) return AzoraSyntaxHighlighter.SPEC_TYPE
+        if (index in semantics.typeDeclarations) return AzoraSyntaxHighlighter.TYPE_DECLARATION
+        semantics.functionByToken[index]?.let { return functionStyle(it.context) }
+        semantics.propertyByToken[index]?.let { return propertyStyle(it.context) }
+        if (semantics.parameterByToken.containsKey(index) || token.text in IMPLICIT_PARAMETERS) {
+            return AzoraSyntaxHighlighter.PARAMETER
         }
+        if (semantics.variableByToken.containsKey(index)) return AzoraSyntaxHighlighter.IDENTIFIER
 
         val isCall = next != null && next.type == AzoraTokenTypes.L_PAREN && next.start == token.end
-        if (isCall) {
-            // `Point(…)` constructs a type; `println(…)` calls a function.
-            return if (declaredTypes.contains(token.text) || token.text.first().isUpperCase()) {
-                AzoraSyntaxHighlighter.TYPE_NAME
-            } else {
-                AzoraSyntaxHighlighter.FUNCTION_CALL
-            }
-        }
+        if (token.text in semantics.specTypes) return AzoraSyntaxHighlighter.SPEC_TYPE
+        if (token.text in semantics.types) return AzoraSyntaxHighlighter.TYPE_NAME
+        if (isCall && token.text in semantics.functions) return AzoraSyntaxHighlighter.FUNCTION_CALL
+        if (isParameterReference(tokens, index, semantics.parameters)) return AzoraSyntaxHighlighter.PARAMETER
 
-        if (declaredTypes.contains(token.text)) return AzoraSyntaxHighlighter.TYPE_NAME
         return null
     }
 
-    /** The names this file declares as types, used to color their references. */
-    private fun collectDeclaredNames(tokens: List<AzoraToken>): Set<String> {
-        val types = HashSet<String>()
+    private fun functionStyle(context: MemberContext): TextAttributesKey = when (context) {
+        MemberContext.NORMAL -> AzoraSyntaxHighlighter.FUNCTION_DECLARATION
+        MemberContext.SPEC -> AzoraSyntaxHighlighter.SPEC_FUNCTION
+        MemberContext.OVERRIDE -> AzoraSyntaxHighlighter.OVERRIDE_FUNCTION
+    }
+
+    private fun propertyStyle(context: MemberContext): TextAttributesKey = when (context) {
+        MemberContext.NORMAL -> AzoraSyntaxHighlighter.PROPERTY
+        MemberContext.SPEC -> AzoraSyntaxHighlighter.SPEC_PROPERTY
+        MemberContext.OVERRIDE -> AzoraSyntaxHighlighter.OVERRIDE_PROPERTY
+    }
+
+    /** Builds the declaration and context index shared by all token classifiers. */
+    private fun collectSemantics(tokens: List<AzoraToken>, external: AzoraSemanticSymbols): Semantics {
+        val specBodies = declarationBodies(tokens, "spec")
+        val overrideBodies = declarationBodies(tokens, "impl", requireFor = true)
+        val typeDeclarations = linkedSetOf<Int>()
+        val specDeclarations = linkedSetOf<Int>()
+        val decoratorDeclarations = linkedSetOf<Int>()
+        val callableHeads = mutableListOf<Pair<Int, Int>>()
+        val propertyHeads = mutableListOf<Pair<Int, Int>>()
+        val bindingHeads = mutableListOf<Pair<Int, Int>>()
+
         for (i in tokens.indices) {
             val token = tokens[i]
             if (!AzoraTokenTypes.KEYWORDS.contains(token.type)) continue
-            if (token.text !in TYPE_DECL_KEYWORDS) continue
-            val next = nextMeaningful(tokens, i, sameLine = true) ?: continue
-            val name = tokens[next]
-            if (name.type == AzoraTokenTypes.IDENTIFIER) types.add(name.text)
+            when (token.text) {
+                in TYPE_DECL_KEYWORDS -> declarationNameAfter(tokens, i)?.let { typeDeclarations.add(it) }
+                "spec" -> declarationNameAfter(tokens, i)?.let { specDeclarations.add(it) }
+                "deco" -> declarationNameAfter(tokens, i)?.let { decoratorDeclarations.add(it) }
+                in FUNCTION_DECL_KEYWORDS -> callableNameAfter(tokens, i)?.let { callableHeads.add(i to it) }
+                "prop" -> declarationNameAfter(tokens, i)?.let { propertyHeads.add(i to it) }
+                in BINDING_KEYWORDS -> declarationNameAfter(tokens, i)?.let { bindingHeads.add(i to it) }
+            }
         }
-        return types
+
+        val callableScopes = callableHeads.mapIndexed { position, (head, _) ->
+            val end = callableHeads.getOrNull(position + 1)?.first?.minus(1) ?: tokens.lastIndex
+            head..end
+        }
+        val functionDeclarations = callableHeads.map { (_, nameIndex) ->
+            ScopedDeclaration(
+                tokens[nameIndex].text,
+                nameIndex,
+                0..tokens.lastIndex,
+                memberContext(nameIndex, specBodies, overrideBodies),
+            )
+        }
+        val properties = propertyHeads.map { (_, nameIndex) ->
+            ScopedDeclaration(
+                tokens[nameIndex].text,
+                nameIndex,
+                0..tokens.lastIndex,
+                memberContext(nameIndex, specBodies, overrideBodies),
+            )
+        }
+        val parameters = functionDeclarations.mapIndexed { position, declaration ->
+            parameterDeclarations(tokens, declaration.copy(scope = callableScopes[position]))
+        }.flatten()
+        val variables = bindingHeads.map { (head, nameIndex) ->
+            val enclosing = callableScopes.lastOrNull { head in it }
+            ScopedDeclaration(
+                tokens[nameIndex].text,
+                nameIndex,
+                enclosing ?: (head..tokens.lastIndex),
+            )
+        }
+
+        return Semantics(
+            types = external.types + typeDeclarations.map { tokens[it].text },
+            specTypes = external.specTypes + specDeclarations.map { tokens[it].text },
+            functions = external.functions + functionDeclarations.map { it.name },
+            typeDeclarations = typeDeclarations,
+            specDeclarations = specDeclarations,
+            decoratorDeclarations = decoratorDeclarations,
+            functionDeclarations = functionDeclarations,
+            propertyDeclarations = properties,
+            parameters = parameters,
+            variables = variables,
+            modulePathTokens = modulePathTokens(tokens),
+            zoneUsageTokens = zoneUsageTokens(tokens),
+        )
     }
+
+    /** Finds the first declared identifier after a keyword and optional generic header. */
+    private fun declarationNameAfter(tokens: List<AzoraToken>, head: Int): Int? {
+        var index = nextMeaningful(tokens, head, sameLine = false) ?: return null
+        index = skipGenericHeader(tokens, index) ?: return null
+        val token = tokens[index]
+        return index.takeIf { token.type == AzoraTokenTypes.IDENTIFIER }
+    }
+
+    /** Finds the last identifier before a callable's parameter list. */
+    private fun callableNameAfter(tokens: List<AzoraToken>, head: Int): Int? {
+        var index = nextMeaningful(tokens, head, sameLine = false) ?: return null
+        index = skipGenericHeader(tokens, index) ?: return null
+        var candidate: Int? = null
+        while (index < tokens.size) {
+            val token = tokens[index]
+            if (token.type == AzoraTokenTypes.L_PAREN) return candidate
+            if (token.type == AzoraTokenTypes.L_BRACE || token.type == AzoraTokenTypes.SEMICOLON) return candidate
+            if (token.type == AzoraTokenTypes.IDENTIFIER) candidate = index
+            index = nextMeaningful(tokens, index, sameLine = false) ?: break
+        }
+        return candidate
+    }
+
+    /** Skips `<...>` when [index] starts a generic declaration header. */
+    private fun skipGenericHeader(tokens: List<AzoraToken>, index: Int): Int? {
+        if (!isOperator(tokens[index], "<")) return index
+        var depth = 0
+        var cursor = index
+        while (cursor < tokens.size) {
+            when {
+                isOperator(tokens[cursor], "<") -> depth++
+                isOperator(tokens[cursor], ">") -> {
+                    depth--
+                    if (depth == 0) return nextMeaningful(tokens, cursor, sameLine = false)
+                }
+            }
+            cursor++
+        }
+        return null
+    }
+
+    /** Braced declaration bodies for specs or spec implementation blocks. */
+    private fun declarationBodies(
+        tokens: List<AzoraToken>,
+        keyword: String,
+        requireFor: Boolean = false,
+    ): List<IntRange> {
+        val ranges = mutableListOf<IntRange>()
+        for (i in tokens.indices) {
+            if (!AzoraTokenTypes.KEYWORDS.contains(tokens[i].type) || tokens[i].text != keyword) continue
+            var cursor = i + 1
+            var sawFor = false
+            while (cursor < tokens.size && tokens[cursor].type != AzoraTokenTypes.L_BRACE) {
+                if (tokens[cursor].text == "for") sawFor = true
+                if (tokens[cursor].type == AzoraTokenTypes.SEMICOLON) break
+                cursor++
+            }
+            if (cursor >= tokens.size || tokens[cursor].type != AzoraTokenTypes.L_BRACE) continue
+            if (requireFor && !sawFor) continue
+            matchingBrace(tokens, cursor)?.let { close ->
+                if (close > cursor) ranges.add((cursor + 1) until close)
+            }
+        }
+        return ranges
+    }
+
+    private fun matchingBrace(tokens: List<AzoraToken>, open: Int): Int? {
+        var depth = 0
+        for (i in open until tokens.size) {
+            when (tokens[i].type) {
+                AzoraTokenTypes.L_BRACE -> depth++
+                AzoraTokenTypes.R_BRACE -> {
+                    depth--
+                    if (depth == 0) return i
+                }
+            }
+        }
+        return null
+    }
+
+    private fun matchingParen(tokens: List<AzoraToken>, open: Int, limit: Int): Int? {
+        var depth = 0
+        for (i in open..limit.coerceAtMost(tokens.lastIndex)) {
+            when (tokens[i].type) {
+                AzoraTokenTypes.L_PAREN -> depth++
+                AzoraTokenTypes.R_PAREN -> {
+                    depth--
+                    if (depth == 0) return i
+                }
+            }
+        }
+        return null
+    }
+
+    private fun memberContext(
+        index: Int,
+        specBodies: List<IntRange>,
+        overrideBodies: List<IntRange>,
+    ): MemberContext = when {
+        overrideBodies.any { index in it } -> MemberContext.OVERRIDE
+        specBodies.any { index in it } -> MemberContext.SPEC
+        else -> MemberContext.NORMAL
+    }
+
+    /** Parameters from `(name: Type)` and a `{ self& -> ... }` receiver. */
+    private fun parameterDeclarations(
+        tokens: List<AzoraToken>,
+        function: ScopedDeclaration,
+    ): List<ScopedDeclaration> {
+        val declarations = mutableListOf<ScopedDeclaration>()
+        val open = function.scope.firstOrNull { tokens[it].type == AzoraTokenTypes.L_PAREN }
+        val close = open?.let { matchingParen(tokens, it, function.scope.last) }
+        if (open != null && close != null) {
+            for (i in (open + 1) until close) {
+                if (tokens[i].type != AzoraTokenTypes.IDENTIFIER) continue
+                val next = nextMeaningful(tokens, i, sameLine = false) ?: continue
+                if (next < close && tokens[next].type == AzoraTokenTypes.COLON) {
+                    declarations.add(ScopedDeclaration(tokens[i].text, i, function.scope))
+                }
+            }
+        }
+
+        val receiverStart = (close ?: function.tokenIndex) + 1
+        for (i in receiverStart..function.scope.last.coerceAtMost(tokens.lastIndex)) {
+            if (tokens[i].type == AzoraTokenTypes.ARROW) break
+            if (tokens[i].type == AzoraTokenTypes.IDENTIFIER && tokens[i].text in IMPLICIT_PARAMETERS) {
+                declarations.add(ScopedDeclaration(tokens[i].text, i, function.scope))
+                break
+            }
+            if (i > receiverStart && tokens[i].type == AzoraTokenTypes.L_BRACE) continue
+            if (tokens[i].type == AzoraTokenTypes.R_BRACE) break
+        }
+        return declarations
+    }
+
+    /** All identifier segments on an `import` line. */
+    private fun modulePathTokens(tokens: List<AzoraToken>): Set<Int> {
+        val result = linkedSetOf<Int>()
+        for (i in tokens.indices) {
+            if (!AzoraTokenTypes.KEYWORDS.contains(tokens[i].type) || tokens[i].text != "import") continue
+            var cursor = i + 1
+            while (cursor < tokens.size) {
+                val token = tokens[cursor]
+                if (token.type == AzoraTokenTypes.WHITE_SPACE && token.text.contains('\n')) break
+                if (token.type == AzoraTokenTypes.SEMICOLON) break
+                if (token.type == AzoraTokenTypes.IDENTIFIER) result.add(cursor)
+                cursor++
+            }
+        }
+        return result
+    }
+
+    /** Lowercase zone path segments used before `::`, excluding zone declarations. */
+    private fun zoneUsageTokens(tokens: List<AzoraToken>): Set<Int> {
+        val result = linkedSetOf<Int>()
+        for (i in tokens.indices) {
+            val token = tokens[i]
+            if (token.type != AzoraTokenTypes.IDENTIFIER || token.text.firstOrNull()?.isLowerCase() != true) continue
+            val next = nextMeaningful(tokens, i, sameLine = true) ?: continue
+            if (!isOperator(tokens[next], "::") || isZoneDeclarationSegment(tokens, i)) continue
+            result.add(i)
+        }
+        return result
+    }
+
+    private fun isZoneDeclarationSegment(tokens: List<AzoraToken>, index: Int): Boolean {
+        var cursor = index - 1
+        while (cursor >= 0) {
+            val token = tokens[cursor]
+            if (AzoraTokenTypes.IGNORABLE.contains(token.type)) {
+                cursor--
+                continue
+            }
+            if (token.text == "zone" && AzoraTokenTypes.KEYWORDS.contains(token.type)) return true
+            if (token.type == AzoraTokenTypes.IDENTIFIER || isOperator(token, "::")) {
+                cursor--
+                continue
+            }
+            return false
+        }
+        return false
+    }
+
+    private fun isParameterReference(
+        tokens: List<AzoraToken>,
+        index: Int,
+        parameters: List<ScopedDeclaration>,
+    ): Boolean = parameters.any {
+        index != it.tokenIndex && index in it.scope && tokens[index].text == it.name
+    }
+
+    /** Applies the website's light-gray styles to declarations with no references. */
+    private fun applyUnusedStyles(
+        tokens: List<AzoraToken>,
+        semantics: Semantics,
+        result: MutableMap<Int, TextAttributesKey>,
+    ) {
+        val declarationTokens = buildSet {
+            addAll(semantics.functionDeclarations.map { it.tokenIndex })
+            addAll(semantics.propertyDeclarations.map { it.tokenIndex })
+            addAll(semantics.parameters.map { it.tokenIndex })
+            addAll(semantics.variables.map { it.tokenIndex })
+        }
+
+        fun isUsed(declaration: ScopedDeclaration): Boolean =
+            declaration.scope.any { index ->
+                index != declaration.tokenIndex &&
+                    index !in declarationTokens &&
+                    tokens[index].type == AzoraTokenTypes.IDENTIFIER &&
+                    tokens[index].text == declaration.name
+            }
+
+        for (declaration in semantics.functionDeclarations) {
+            if (declaration.name == "main" || isUsed(declaration)) continue
+            result[tokens[declaration.tokenIndex].start] = when (declaration.context) {
+                MemberContext.NORMAL -> AzoraSyntaxHighlighter.UNUSED
+                MemberContext.SPEC -> AzoraSyntaxHighlighter.UNUSED_SPEC_MEMBER
+                MemberContext.OVERRIDE -> AzoraSyntaxHighlighter.UNUSED_OVERRIDE_MEMBER
+            }
+        }
+        for (declaration in semantics.propertyDeclarations) {
+            if (isUsed(declaration)) continue
+            result[tokens[declaration.tokenIndex].start] = when (declaration.context) {
+                MemberContext.NORMAL -> AzoraSyntaxHighlighter.UNUSED_PROPERTY
+                MemberContext.SPEC -> AzoraSyntaxHighlighter.UNUSED_SPEC_MEMBER
+                MemberContext.OVERRIDE -> AzoraSyntaxHighlighter.UNUSED_OVERRIDE_MEMBER
+            }
+        }
+        for (declaration in semantics.parameters) {
+            if (!isUsed(declaration)) {
+                result[tokens[declaration.tokenIndex].start] = AzoraSyntaxHighlighter.UNUSED_PARAMETER
+            }
+        }
+        for (declaration in semantics.variables) {
+            if (!isUsed(declaration)) {
+                result[tokens[declaration.tokenIndex].start] = AzoraSyntaxHighlighter.UNUSED
+            }
+        }
+    }
+
+    private fun isOperator(token: AzoraToken, value: String): Boolean =
+        token.type == AzoraTokenTypes.OPERATOR && token.text == value
+
+    private val IMPLICIT_PARAMETERS = AzoraLanguageFacts.implicitParameters
 
     // ── Smart casts ────────────────────────────────────────────────────
 

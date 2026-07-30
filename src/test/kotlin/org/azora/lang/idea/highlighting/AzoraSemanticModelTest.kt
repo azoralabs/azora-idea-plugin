@@ -136,14 +136,120 @@ class AzoraSemanticModelTest {
                 var x: Real
             }
 
+            func compute(): Real {
+                return 1.0
+            }
+
             func distance(): Real {
                 return compute()
+            }
+
+            func main() {
+                distance()
             }
         """.trimIndent()
 
         assertEquals(AzoraSyntaxHighlighter.TYPE_DECLARATION, keyFor(source, "Point"))
         assertEquals(AzoraSyntaxHighlighter.FUNCTION_DECLARATION, keyFor(source, "distance"))
-        assertEquals(AzoraSyntaxHighlighter.FUNCTION_CALL, keyFor(source, "compute"))
+        assertEquals(AzoraSyntaxHighlighter.FUNCTION_CALL, keyFor(source, "compute", occurrence = 1))
+    }
+
+    @Test
+    fun `unknown calls and capitalized identifiers are not colored as known symbols`() {
+        val source = "func main() { MissingType(unknownCall()) }"
+        assertNull(keyFor(source, "MissingType"))
+        assertNull(keyFor(source, "unknownCall"))
+    }
+
+    @Test
+    fun `indexed functions and types are colored without hardcoded names`() {
+        val source = "func main() { render(Widget()) }"
+        val symbols = AzoraSemanticSymbols(
+            types = setOf("Widget"),
+            functions = setOf("render"),
+        )
+        val tokens = tokensOf(source)
+        val classified = AzoraSemanticModel.classify(tokens, AzoraMacros.EMPTY, symbols)
+
+        fun classifiedKey(word: String): TextAttributesKey? {
+            val token = tokens.first { it.text == word }
+            return classified[token.start]
+        }
+
+        assertEquals(AzoraSyntaxHighlighter.FUNCTION_CALL, classifiedKey("render"))
+        assertEquals(AzoraSyntaxHighlighter.TYPE_NAME, classifiedKey("Widget"))
+    }
+
+    @Test
+    fun `receiver identifiers are parameters rather than keywords`() {
+        val source = """
+            pack App { fin name: String }
+            impl App {
+                func greet(): String { self& ->
+                    return self.name
+                }
+            }
+        """.trimIndent()
+
+        assertEquals(AzoraSyntaxHighlighter.PARAMETER, keyFor(source, "self", occurrence = 0))
+        assertEquals(AzoraSyntaxHighlighter.PARAMETER, keyFor(source, "self", occurrence = 1))
+    }
+
+    @Test
+    fun `spec and override members use the website semantic styles`() {
+        val source = """
+            spec PrettyPrint {
+                prop pretty: String
+                func render(): String
+            }
+
+            pack Report
+
+            impl PrettyPrint for Report {
+                prop pretty: String = "report"
+                func render(): String { return pretty }
+            }
+        """.trimIndent()
+
+        assertEquals(AzoraSyntaxHighlighter.SPEC_TYPE, keyFor(source, "PrettyPrint", occurrence = 0))
+        assertEquals(AzoraSyntaxHighlighter.SPEC_TYPE, keyFor(source, "PrettyPrint", occurrence = 1))
+        assertEquals(AzoraSyntaxHighlighter.SPEC_PROPERTY, keyFor(source, "pretty", occurrence = 0))
+        assertEquals(AzoraSyntaxHighlighter.UNUSED_SPEC_MEMBER, keyFor(source, "render", occurrence = 0))
+        assertEquals(AzoraSyntaxHighlighter.OVERRIDE_PROPERTY, keyFor(source, "pretty", occurrence = 1))
+        assertEquals(AzoraSyntaxHighlighter.UNUSED_OVERRIDE_MEMBER, keyFor(source, "render", occurrence = 1))
+    }
+
+    @Test
+    fun `import paths and zone uses are italic but zone declarations are not`() {
+        val source = """
+            import std.container.tuple
+            friend zone std::container {
+                func make() { std::println("ok") }
+            }
+        """.trimIndent()
+
+        assertEquals(AzoraSyntaxHighlighter.MODULE_PATH, keyFor(source, "std", occurrence = 0))
+        assertNull(keyFor(source, "std", occurrence = 1))
+        assertEquals(AzoraSyntaxHighlighter.ZONE_USAGE, keyFor(source, "std", occurrence = 2))
+    }
+
+    @Test
+    fun `generic parameters are blue semantic generics and unused declarations are dimmed`() {
+        val source = """
+            func<T> identity(value: T): T {
+                fin unused = 1
+                return value
+            }
+
+            func main() {
+                identity(1)
+            }
+        """.trimIndent()
+
+        assertEquals(AzoraSyntaxHighlighter.TYPE_PARAMETER, keyFor(source, "T", occurrence = 0))
+        assertEquals(AzoraSyntaxHighlighter.TYPE_PARAMETER, keyFor(source, "T", occurrence = 1))
+        assertEquals(AzoraSyntaxHighlighter.PARAMETER, keyFor(source, "value", occurrence = 0))
+        assertEquals(AzoraSyntaxHighlighter.UNUSED, keyFor(source, "unused"))
     }
 
     @Test

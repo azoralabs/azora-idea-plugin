@@ -90,7 +90,7 @@ class AzoraSyntaxHighlighter : SyntaxHighlighterBase() {
 
         // ── Keyword categories ─────────────────────────────────────────
 
-        /** General-purpose keywords (`true`, `false`, `null`, `self`). */
+        /** General-purpose keywords (`true`, `false`, `null`). */
         val KEYWORD = key("AZORA_KEYWORD", AzoraPalette.bold(AzoraPalette.KEYWORD))
 
         /** Declaration keywords (`func`, `pack`, `enum`, `slot`, `meta`, …). */
@@ -114,25 +114,82 @@ class AzoraSyntaxHighlighter : SyntaxHighlighterBase() {
         val IDENTIFIER = key("AZORA_IDENTIFIER", AzoraPalette.fg(AzoraPalette.FOREGROUND))
 
         /** Generic type parameters (`T`, `U`, …). */
-        val TYPE_PARAMETER = key("AZORA_TYPE_PARAMETER", AzoraPalette.fg(AzoraPalette.TYPE_PARAMETER))
+        val TYPE_PARAMETER = key("AZORA_TYPE_PARAMETER", AzoraPalette.bold(AzoraPalette.TYPE_PARAMETER))
 
         /** Named types: packs, enums, slots, fails, specs, zones, aliases. */
         val TYPE_NAME = key("AZORA_TYPE_NAME", AzoraPalette.fg(AzoraPalette.TYPE))
 
         /** The name in a type declaration (`pack ‹Point›`). */
-        val TYPE_DECLARATION = key("AZORA_TYPE_DECLARATION", AzoraPalette.underlined(AzoraPalette.TYPE))
+        val TYPE_DECLARATION = key("AZORA_TYPE_DECLARATION", AzoraPalette.fg(AzoraPalette.TYPE))
+
+        /** A spec declaration or reference. */
+        val SPEC_TYPE = key("AZORA_SPEC_TYPE", AzoraPalette.italic(AzoraPalette.TYPE))
+
+        /** A zone segment used before `::`. */
+        val ZONE_USAGE = key("AZORA_ZONE_USAGE", AzoraPalette.italic(AzoraPalette.FOREGROUND))
+
+        /** A segment of an `import` module path. */
+        val MODULE_PATH = key("AZORA_MODULE_PATH", AzoraPalette.italic(AzoraPalette.FOREGROUND))
 
         /** A called function, task or flow. */
         val FUNCTION_CALL = key("AZORA_FUNCTION_CALL", AzoraPalette.fg(AzoraPalette.FUNCTION))
 
         /** The name in a function declaration (`func ‹main›`). */
-        val FUNCTION_DECLARATION = key("AZORA_FUNCTION_DECLARATION", AzoraPalette.underlined(AzoraPalette.FUNCTION))
+        val FUNCTION_DECLARATION = key("AZORA_FUNCTION_DECLARATION", AzoraPalette.fg(AzoraPalette.FUNCTION))
+
+        /** A callable declared by a spec. */
+        val SPEC_FUNCTION = key("AZORA_SPEC_FUNCTION", AzoraPalette.italic(AzoraPalette.FUNCTION))
+
+        /** A spec callable implemented by an `impl ... for ...` block. */
+        val OVERRIDE_FUNCTION = key(
+            "AZORA_OVERRIDE_FUNCTION",
+            AzoraPalette.italicUnderlined(AzoraPalette.FUNCTION),
+        )
 
         /** Function/constructor parameters. */
-        val PARAMETER = key("AZORA_PARAMETER", AzoraPalette.fg(AzoraPalette.PARAMETER))
+        val PARAMETER = key("AZORA_PARAMETER", AzoraPalette.underlined(AzoraPalette.FOREGROUND))
 
         /** Pack fields and computed properties accessed through a receiver. */
         val FIELD = key("AZORA_FIELD", AzoraPalette.fg(AzoraPalette.FOREGROUND))
+
+        /** A computed property declaration. */
+        val PROPERTY = key("AZORA_PROPERTY", AzoraPalette.italicUnderlined(AzoraPalette.FOREGROUND))
+
+        /** A property declared by a spec. */
+        val SPEC_PROPERTY = key("AZORA_SPEC_PROPERTY", AzoraPalette.italic(AzoraPalette.FOREGROUND))
+
+        /** A spec property implemented by an `impl ... for ...` block. */
+        val OVERRIDE_PROPERTY = key(
+            "AZORA_OVERRIDE_PROPERTY",
+            AzoraPalette.italicUnderlined(AzoraPalette.FOREGROUND),
+        )
+
+        /** An unused declaration. */
+        val UNUSED = key("AZORA_UNUSED", AzoraPalette.fg(AzoraPalette.UNUSED))
+
+        /** An unused parameter. */
+        val UNUSED_PARAMETER = key(
+            "AZORA_UNUSED_PARAMETER",
+            AzoraPalette.underlined(AzoraPalette.UNUSED),
+        )
+
+        /** An unused property. */
+        val UNUSED_PROPERTY = key(
+            "AZORA_UNUSED_PROPERTY",
+            AzoraPalette.italicUnderlined(AzoraPalette.UNUSED),
+        )
+
+        /** An unused callable/property declared by a spec. */
+        val UNUSED_SPEC_MEMBER = key(
+            "AZORA_UNUSED_SPEC_MEMBER",
+            AzoraPalette.italic(AzoraPalette.UNUSED),
+        )
+
+        /** An unused spec implementation member. */
+        val UNUSED_OVERRIDE_MEMBER = key(
+            "AZORA_UNUSED_OVERRIDE_MEMBER",
+            AzoraPalette.italicUnderlined(AzoraPalette.UNUSED),
+        )
 
         /** An identifier narrowed by a smart cast (`is` / `guard is`). */
         val SMART_CAST = key("AZORA_SMART_CAST", AzoraPalette.background(AzoraPalette.SMART_CAST_BACKGROUND))
@@ -168,7 +225,7 @@ class AzoraSyntaxHighlighter : SyntaxHighlighterBase() {
         val OPERATOR = key("AZORA_OPERATOR", AzoraPalette.fg(AzoraPalette.FOREGROUND))
 
         /** Decorators (`@Stable`, `@Derive`). */
-        val DECORATOR = key("AZORA_DECORATOR", AzoraPalette.fg(AzoraPalette.FUNCTION))
+        val DECORATOR = key("AZORA_DECORATOR", AzoraPalette.fg(AzoraPalette.DECORATOR))
 
         /**
          * Macros — prefix (`vec@[…]`), infix (`a with b`) and type (`res T`).

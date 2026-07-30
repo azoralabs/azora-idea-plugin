@@ -61,20 +61,23 @@ object AzoraLanguageFacts {
 
     val literalKeywords = setOf("true", "false", "null")
 
-    /** `self` is not in the compiler's keyword table but is always a receiver. */
-    val specialKeywords = setOf("self")
+    /**
+     * Implicit receiver parameters. They remain identifiers in the lexer and
+     * are styled semantically as parameters only where they are used.
+     */
+    val implicitParameters = setOf("self", "it")
 
     val hardKeywords = declarationKeywords + controlKeywords + modifierKeywords +
-        memoryKeywords + reactiveKeywords + literalKeywords + specialKeywords
+        memoryKeywords + reactiveKeywords + literalKeywords
 
     /**
      * Words that are keywords only in some positions and ordinary identifiers
      * elsewhere. `where` is not in the compiler's keyword table at all — the
      * parser matches it contextually — so it must never be colored blindly.
      */
-    val softKeywords = setOf("where", "friend", "out")
+    val softKeywords = setOf("where")
 
-    val allCompletionKeywords = hardKeywords.sorted()
+    val allCompletionKeywords = (hardKeywords + softKeywords).sorted()
 
     /**
      * Compiler-provided (`bridge deco`) decorators. These come from the

@@ -18,8 +18,12 @@ package org.azora.lang.idea.annotator
 
 import org.azora.lang.idea.AzoraFile
 import org.azora.lang.idea.highlighting.AzoraSemanticModel
+import org.azora.lang.idea.highlighting.AzoraSemanticSymbols
 import org.azora.lang.idea.highlighting.AzoraToken
 import org.azora.lang.idea.symbol.AzoraMacroIndex
+import org.azora.lang.idea.symbol.AzoraSymbolService
+import org.azora.lang.idea.symbol.SymbolInfo
+import org.azora.lang.idea.symbol.SymbolKind
 import com.intellij.lang.annotation.AnnotationHolder
 import com.intellij.lang.annotation.Annotator
 import com.intellij.lang.annotation.HighlightSeverity
@@ -56,15 +60,50 @@ class AzoraSemanticAnnotator : Annotator {
         CachedValuesManager.getCachedValue(file) {
             val macros = runCatching {
                 AzoraMacroIndex.getInstance(file.project).macrosFor(file.text)
-            }.getOrNull()
-
-            val result = if (macros == null) {
-                emptyMap()
-            } else {
-                AzoraSemanticModel.classify(tokensOf(file), macros)
-            }
+            }.getOrDefault(org.azora.lang.idea.symbol.AzoraMacros.EMPTY)
+            val service = AzoraSymbolService.getInstance(file.project)
+            val filePath = file.virtualFile?.path ?: file.name
+            val symbols = runCatching {
+                semanticSymbols(service.getAllVisibleSymbols(file.project, filePath, file.text))
+            }.getOrDefault(AzoraSemanticSymbols.EMPTY)
+            val result = AzoraSemanticModel.classify(tokensOf(file), macros, symbols)
             CachedValueProvider.Result.create(result, file)
         }
+
+    /** Converts the source index into the compact name sets needed for coloring. */
+    private fun semanticSymbols(symbols: List<SymbolInfo>): AzoraSemanticSymbols {
+        val types = linkedSetOf<String>()
+        val specs = linkedSetOf<String>()
+        val functions = linkedSetOf<String>()
+
+        fun visit(symbol: SymbolInfo) {
+            when (symbol.kind) {
+                SymbolKind.SPEC -> specs.add(symbol.name)
+                SymbolKind.PACK,
+                SymbolKind.ENUM,
+                SymbolKind.FAIL,
+                SymbolKind.SLOT,
+                SymbolKind.SOLO,
+                SymbolKind.WRAP,
+                SymbolKind.TYPEALIAS -> types.add(symbol.name)
+                SymbolKind.FUNC,
+                SymbolKind.METHOD,
+                SymbolKind.BRIDGE_FUNC,
+                SymbolKind.TASK,
+                SymbolKind.FLOW,
+                SymbolKind.HOOK,
+                SymbolKind.INFX,
+                SymbolKind.OPERATOR,
+                SymbolKind.CTOR,
+                SymbolKind.DTOR -> functions.add(symbol.name)
+                else -> Unit
+            }
+            symbol.members.forEach(::visit)
+        }
+
+        symbols.forEach(::visit)
+        return AzoraSemanticSymbols(types, specs, functions)
+    }
 
     /** Flattens the file's leaf tokens into the form the model works on. */
     private fun tokensOf(file: PsiFile): List<AzoraToken> {

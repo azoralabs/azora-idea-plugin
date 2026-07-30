@@ -53,8 +53,11 @@ object AzoraPalette {
     /** Types, packs, specs, enums, zones — pastel teal. */
     val TYPE = pair(0x2F6F68, 0x5FA89F)
 
-    /** Functions, tasks, flows and decorators — pastel yellow. */
+    /** Functions, tasks and flows — pastel yellow. */
     val FUNCTION = pair(0x8A6A0A, 0xE6C96B)
+
+    /** Decorators and decorator declarations — pastel orange. */
+    val DECORATOR = pair(0xA65310, 0xE8944A)
 
     /** Strings and char literals — pastel green. */
     val STRING = pair(0x3C7C4C, 0x7DBF8A)
@@ -68,11 +71,11 @@ object AzoraPalette {
     /** Ordinary identifiers, numbers, operators and punctuation. */
     val FOREGROUND = pair(0x262626, 0xD9DADA)
 
-    /** Parameters and other bound names. */
-    val PARAMETER = pair(0x5A5A5A, 0xB8B8B8)
+    /** Unused declarations and parameters. */
+    val UNUSED = pair(0x6D6D6D, 0xB8B8B8)
 
     /** Generic type parameters. */
-    val TYPE_PARAMETER = pair(0x6B4C8A, 0x9B86C4)
+    val TYPE_PARAMETER = pair(0x356A9A, 0x5BA3D0)
 
     /** Invalid / unrecognized input. */
     val INVALID = pair(0xC1121F, 0xE63946)
@@ -105,6 +108,10 @@ object AzoraPalette {
     /** Foreground colour with a solid underline. */
     fun underlined(color: JBColor, style: Int = Font.PLAIN): TextAttributes =
         TextAttributes(color, null, color, EffectType.LINE_UNDERSCORE, style)
+
+    /** Italic foreground with a solid underline. */
+    fun italicUnderlined(color: JBColor): TextAttributes =
+        underlined(color, Font.ITALIC)
 
     /** Foreground colour with a wavy underline, used for diagnostics. */
     fun wavy(color: JBColor): TextAttributes =

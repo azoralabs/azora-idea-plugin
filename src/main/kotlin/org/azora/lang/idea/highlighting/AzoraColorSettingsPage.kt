@@ -66,11 +66,24 @@ class AzoraColorSettingsPage : ColorSettingsPage {
             AttributesDescriptor("Identifiers//Identifier", AzoraSyntaxHighlighter.IDENTIFIER),
             AttributesDescriptor("Identifiers//Type reference", AzoraSyntaxHighlighter.TYPE_NAME),
             AttributesDescriptor("Identifiers//Type declaration", AzoraSyntaxHighlighter.TYPE_DECLARATION),
+            AttributesDescriptor("Identifiers//Spec type", AzoraSyntaxHighlighter.SPEC_TYPE),
             AttributesDescriptor("Identifiers//Type parameter", AzoraSyntaxHighlighter.TYPE_PARAMETER),
+            AttributesDescriptor("Identifiers//Zone usage", AzoraSyntaxHighlighter.ZONE_USAGE),
+            AttributesDescriptor("Identifiers//Import path", AzoraSyntaxHighlighter.MODULE_PATH),
             AttributesDescriptor("Identifiers//Function call", AzoraSyntaxHighlighter.FUNCTION_CALL),
             AttributesDescriptor("Identifiers//Function declaration", AzoraSyntaxHighlighter.FUNCTION_DECLARATION),
+            AttributesDescriptor("Identifiers//Spec function", AzoraSyntaxHighlighter.SPEC_FUNCTION),
+            AttributesDescriptor("Identifiers//Override function", AzoraSyntaxHighlighter.OVERRIDE_FUNCTION),
             AttributesDescriptor("Identifiers//Parameter", AzoraSyntaxHighlighter.PARAMETER),
             AttributesDescriptor("Identifiers//Field", AzoraSyntaxHighlighter.FIELD),
+            AttributesDescriptor("Identifiers//Property", AzoraSyntaxHighlighter.PROPERTY),
+            AttributesDescriptor("Identifiers//Spec property", AzoraSyntaxHighlighter.SPEC_PROPERTY),
+            AttributesDescriptor("Identifiers//Override property", AzoraSyntaxHighlighter.OVERRIDE_PROPERTY),
+            AttributesDescriptor("Identifiers//Unused declaration", AzoraSyntaxHighlighter.UNUSED),
+            AttributesDescriptor("Identifiers//Unused parameter", AzoraSyntaxHighlighter.UNUSED_PARAMETER),
+            AttributesDescriptor("Identifiers//Unused property", AzoraSyntaxHighlighter.UNUSED_PROPERTY),
+            AttributesDescriptor("Identifiers//Unused spec member", AzoraSyntaxHighlighter.UNUSED_SPEC_MEMBER),
+            AttributesDescriptor("Identifiers//Unused override member", AzoraSyntaxHighlighter.UNUSED_OVERRIDE_MEMBER),
             AttributesDescriptor("Identifiers//Smart cast", AzoraSyntaxHighlighter.SMART_CAST),
 
             // Macros
@@ -110,10 +123,20 @@ class AzoraColorSettingsPage : ColorSettingsPage {
             "macro" to AzoraSyntaxHighlighter.MACRO,
             "type" to AzoraSyntaxHighlighter.TYPE_NAME,
             "typeDecl" to AzoraSyntaxHighlighter.TYPE_DECLARATION,
+            "specType" to AzoraSyntaxHighlighter.SPEC_TYPE,
+            "zoneUsage" to AzoraSyntaxHighlighter.ZONE_USAGE,
+            "modulePath" to AzoraSyntaxHighlighter.MODULE_PATH,
             "call" to AzoraSyntaxHighlighter.FUNCTION_CALL,
             "funcDecl" to AzoraSyntaxHighlighter.FUNCTION_DECLARATION,
+            "specFunc" to AzoraSyntaxHighlighter.SPEC_FUNCTION,
+            "overrideFunc" to AzoraSyntaxHighlighter.OVERRIDE_FUNCTION,
             "param" to AzoraSyntaxHighlighter.PARAMETER,
             "field" to AzoraSyntaxHighlighter.FIELD,
+            "property" to AzoraSyntaxHighlighter.PROPERTY,
+            "specProperty" to AzoraSyntaxHighlighter.SPEC_PROPERTY,
+            "overrideProperty" to AzoraSyntaxHighlighter.OVERRIDE_PROPERTY,
+            "unused" to AzoraSyntaxHighlighter.UNUSED,
+            "unusedParam" to AzoraSyntaxHighlighter.UNUSED_PARAMETER,
             "smartCast" to AzoraSyntaxHighlighter.SMART_CAST,
             "error" to AzoraSyntaxHighlighter.ERROR,
             "warning" to AzoraSyntaxHighlighter.WARNING,
@@ -125,8 +148,8 @@ class AzoraColorSettingsPage : ColorSettingsPage {
         private val DEMO_TEXT = """
             module <typeDecl>example</typeDecl>.app
 
-            import std.{math, container}
-            import std.io
+            import <modulePath>std</modulePath>.{<modulePath>math</modulePath>, <modulePath>container</modulePath>}
+            import <modulePath>std</modulePath>.<modulePath>io</modulePath>
 
             /**
              * A point in two dimensions.
@@ -140,18 +163,18 @@ class AzoraColorSettingsPage : ColorSettingsPage {
 
             impl <type>Point</type> {
                 ctor(<param>x</param>: <type>Real</type>, <param>y</param>: <type>Real</type>) {
-                    self.<field>x</field> = <param>x</param>
-                    self.<field>y</field> = <param>y</param>
+                    <param>self</param>.<field>x</field> = <param>x</param>
+                    <param>self</param>.<field>y</field> = <param>y</param>
                 }
 
                 /// The squared distance to another point.
                 func <funcDecl>distanceTo</funcDecl>(<param>other</param>: <type>Point</type>): <type>Real</type> {
-                    fin dx = <param>other</param>.<field>x</field> - self.<field>x</field>
+                    fin dx = <param>other</param>.<field>x</field> - <param>self</param>.<field>x</field>
                     return dx * dx
                 }
 
                 oper+(<param>other</param>: <type>Point</type>): <type>Point</type> {
-                    return <type>Point</type>(x: self.<field>x</field> + <param>other</param>.<field>x</field>, y: 0.0)
+                    return <type>Point</type>(x: <param>self</param>.<field>x</field> + <param>other</param>.<field>x</field>, y: 0.0)
                 }
             }
 

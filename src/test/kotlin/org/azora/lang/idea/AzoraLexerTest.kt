@@ -125,6 +125,42 @@ class AzoraLexerTest {
         }
     }
 
+    @Test
+    fun `where is a keyword only in declaration constraints`() {
+        val constrainedPack = tokenizeFiltered("pack<T> Box where T is Value")
+        assertEquals(
+            AzoraTokenTypes.CONTROL_KEYWORD,
+            constrainedPack.first { it.second == "where" }.first,
+        )
+
+        val constrainedFunction = tokenizeFiltered(
+            """
+                func<T> select(
+                    value: T
+                ): T where T is Value { return value }
+            """.trimIndent(),
+        )
+        assertEquals(
+            AzoraTokenTypes.CONTROL_KEYWORD,
+            constrainedFunction.first { it.second == "where" }.first,
+        )
+
+        for (source in listOf(
+            "func where(): Unit {}",
+            "func<T> where(value: T): T { return value }",
+            "func accepts(where: Int): Int { return where }",
+            "pack<T> where",
+            "fin where = 1",
+        )) {
+            assertTrue(
+                tokenizeFiltered(source)
+                    .filter { it.second == "where" }
+                    .all { it.first == AzoraTokenTypes.IDENTIFIER },
+                "`where` must remain an identifier in: $source",
+            )
+        }
+    }
+
     // ── Identifiers ────────────────────────────────────────────────────
 
     @Test
@@ -135,6 +171,12 @@ class AzoraLexerTest {
         assertEquals("myVar", tokens[0].second)
         assertEquals("_private", tokens[1].second)
         assertEquals("camelCase", tokens[2].second)
+    }
+
+    @Test
+    fun `self and it are identifiers rather than keywords`() {
+        val tokens = tokenizeFiltered("self it")
+        assertTrue(tokens.all { it.first == AzoraTokenTypes.IDENTIFIER })
     }
 
     // ── Numeric literals ───────────────────────────────────────────────

@@ -261,7 +261,7 @@ class AzoraLexerAdapter : LexerBase() {
                     val macroInvoke = source.getOrNull(pos) == '@' &&
                         source.getOrNull(pos + 1).let { it == '(' || it == '[' || it == '{' } ||
                         source.getOrNull(pos) == '!' && source.getOrNull(pos + 1) == '@'
-                    val type = if (macroInvoke) AzoraTokenTypes.MACRO else classifyWord(source, start, pos, word)
+                    val type = if (macroInvoke) AzoraTokenTypes.MACRO else classifyWord(source, start, word)
                     result.add(LexToken(type, start + startOffset, pos + startOffset))
                 }
 
@@ -544,9 +544,9 @@ class AzoraLexerAdapter : LexerBase() {
         tok.type == AzoraTokenTypes.OPERATOR && tok.end - tok.start == 1 &&
                 buffer.length > tok.start && buffer[tok.start] == '>'
 
-    private fun classifyWord(source: String, start: Int, end: Int, word: String): IElementType {
+    private fun classifyWord(source: String, start: Int, word: String): IElementType {
         if (word in SOFT_KEYWORDS) {
-            return contextualKeywordType(source, start, end, word) ?: AzoraTokenTypes.IDENTIFIER
+            return contextualKeywordType(source, start, word) ?: AzoraTokenTypes.IDENTIFIER
         }
         return KEYWORD_MAP[word] ?: AzoraTokenTypes.IDENTIFIER
     }
@@ -559,17 +559,80 @@ class AzoraLexerAdapter : LexerBase() {
      * some `meta` declaration says so, which only the symbol index knows, so
      * `AzoraSemanticAnnotator` colors those on a later pass.
      */
-    private fun contextualKeywordType(source: String, start: Int, end: Int, word: String): IElementType? {
+    private fun contextualKeywordType(source: String, start: Int, word: String): IElementType? {
         val previous = previousWord(source, start)
-        val next = nextWord(source, end)
-        val nextChar = nextNonWhitespaceChar(source, end)
         if (previous in DECLARATION_NAME_PREFIXES) return null
         return when (word) {
-            "friend" -> if (next == "zone") AzoraTokenTypes.MODIFIER_KEYWORD else null
-            "where" -> if (previous != null) AzoraTokenTypes.CONTROL_KEYWORD else null
-            "out" -> if (nextChar == '{') AzoraTokenTypes.CONTROL_KEYWORD else null
+            "where" -> if (isContextualWhere(source, start)) AzoraTokenTypes.CONTROL_KEYWORD else null
             else -> null
         }
+    }
+
+    /**
+     * Returns whether `where` at [start] belongs to a declaration constraint.
+     *
+     * Azora deliberately keeps `where` contextual: it is a keyword after a
+     * callable/type header but remains a valid function, parameter, or binding
+     * name everywhere else. Walking back to the declaration head mirrors AZLS
+     * and also supports multiline headers without baking in a particular
+     * declaration shape.
+     */
+    private fun isContextualWhere(source: String, start: Int): Boolean {
+        var i = start - 1
+        var parenDepth = 0
+        var bracketDepth = 0
+        var angleDepth = 0
+        var sawDeclarationSubject = false
+
+        while (i >= 0) {
+            when (val c = source[i]) {
+                ' ', '\t', '\r', '\n' -> i--
+                ')' -> {
+                    parenDepth++
+                    i--
+                }
+                ']' -> {
+                    bracketDepth++
+                    i--
+                }
+                '>' -> {
+                    angleDepth++
+                    i--
+                }
+                '(' -> {
+                    if (parenDepth == 0) return false
+                    parenDepth--
+                    i--
+                }
+                '[' -> {
+                    if (bracketDepth == 0) return false
+                    bracketDepth--
+                    i--
+                }
+                '<' -> {
+                    if (angleDepth > 0) angleDepth-- else return false
+                    i--
+                }
+                '{', '}', ';', '=' -> {
+                    if (parenDepth == 0 && bracketDepth == 0 && angleDepth == 0) return false
+                    i--
+                }
+                else -> {
+                    if (c.isLetterOrDigit() || c == '_' || c == '$') {
+                        val end = i + 1
+                        while (i >= 0 && (source[i].isLetterOrDigit() || source[i] == '_' || source[i] == '$')) i--
+                        if (parenDepth == 0 && bracketDepth == 0 && angleDepth == 0) {
+                            val word = source.substring(i + 1, end)
+                            if (word in WHERE_DECLARATION_HEADS) return sawDeclarationSubject
+                            sawDeclarationSubject = true
+                        }
+                    } else {
+                        i--
+                    }
+                }
+            }
+        }
+        return false
     }
 
     private fun previousWord(source: String, start: Int): String? {
@@ -579,21 +642,6 @@ class AzoraLexerAdapter : LexerBase() {
         val end = i + 1
         while (i >= 0 && (source[i].isLetterOrDigit() || source[i] == '_' || source[i] == '$')) i--
         return source.substring(i + 1, end)
-    }
-
-    private fun nextWord(source: String, end: Int): String? {
-        var i = end
-        while (i < source.length && source[i].isWhitespace()) i++
-        if (i >= source.length || !(source[i].isLetter() || source[i] == '_' || source[i] == '$')) return null
-        val start = i
-        while (i < source.length && (source[i].isLetterOrDigit() || source[i] == '_' || source[i] == '$')) i++
-        return source.substring(start, i)
-    }
-
-    private fun nextNonWhitespaceChar(source: String, end: Int): Char? {
-        var i = end
-        while (i < source.length && source[i].isWhitespace()) i++
-        return source.getOrNull(i)
     }
 
     companion object {
@@ -616,15 +664,18 @@ class AzoraLexerAdapter : LexerBase() {
         /** Literal value keywords: `true`, `false`, `null`. */
         private val LITERAL_KEYWORDS = AzoraLanguageFacts.literalKeywords
 
-        /** Special implicit identifiers: `self`, `it`, `out`. */
-        private val SPECIAL_KEYWORDS = AzoraLanguageFacts.specialKeywords
-
         private val SOFT_KEYWORDS = AzoraLanguageFacts.softKeywords
 
         private val DECLARATION_NAME_PREFIXES = setOf(
             "func", "task", "flow", "pack", "enum", "slot", "fail",
             "spec", "zone", "module", "prop", "var", "fin", "let", "typealias",
             "test", "deco", "impl", "type",
+        )
+
+        /** Declaration heads that may legally introduce a `where` clause. */
+        private val WHERE_DECLARATION_HEADS = setOf(
+            "func", "task", "flow", "infx", "pack", "node", "solo",
+            "spec", "deco", "impl", "prop", "typealias",
         )
 
         /**
@@ -640,7 +691,6 @@ class AzoraLexerAdapter : LexerBase() {
             for (kw in MEMORY_KEYWORDS - SOFT_KEYWORDS) put(kw, AzoraTokenTypes.MEMORY_KEYWORD)
             for (kw in REACTIVE_KEYWORDS - SOFT_KEYWORDS) put(kw, AzoraTokenTypes.REACTIVE_KEYWORD)
             for (kw in LITERAL_KEYWORDS - SOFT_KEYWORDS) put(kw, AzoraTokenTypes.KEYWORD)
-            for (kw in SPECIAL_KEYWORDS - SOFT_KEYWORDS) put(kw, AzoraTokenTypes.KEYWORD)
         }
     }
 }

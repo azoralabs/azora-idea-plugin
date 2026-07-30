@@ -38,7 +38,9 @@ intellijPlatform {
     pluginConfiguration {
         name = "Azora Language"
         version = project.version.toString()
-        description = "Full language support for the Azora programming language."
+        // `description` is deliberately not set here: setting it makes
+        // patchPluginXml replace the rich <description> in plugin.xml, and that
+        // block is what the Marketplace renders as the plugin's page.
         ideaVersion {
             sinceBuild = "253"
         }
