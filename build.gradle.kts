@@ -5,7 +5,7 @@ plugins {
 }
 
 group = "org.azora.lang"
-version = "0.0.5"
+version = "0.0.6"
 
 repositories {
     mavenCentral()
@@ -46,16 +46,12 @@ intellijPlatform {
         }
         changeNotes = """
             <ul>
-                <li>Official Azora color palette, shared with the Azora code playground, with bold keywords, purple macros and wavy diagnostics — all overridable.</li>
-                <li>Macros are now discovered from real <code>meta</code> declarations in your project and SDK: a keyword-named macro such as <code>with</code> is purple where it is a macro and a keyword everywhere else. Nothing is hardcoded.</li>
-                <li>String interpolation (<code>${'$'}name</code>, <code>${'$'}{…}</code>) and escape sequences are lexed and colored.</li>
-                <li>Member (<code>.</code>) and zone (<code>::</code>) completion resolve real fields, methods and module members.</li>
-                <li>Live templates for every Azora declaration form.</li>
-                <li>Rebuilt go-to-declaration, hover documentation and indentation.</li>
-                <li>Inferred-type inlay hints and smart-cast highlighting.</li>
-                <li>Errors are underlined with quick fixes.</li>
-                <li>Run gutter icons on <code>func main</code>, <code>task main</code> and every <code>test</code>.</li>
-                <li><code>.azon</code> file support plus lib / exe / multi-module project templates.</li>
+                <li>IntelliSense and semantic highlighting now follow the Azora 0.0.4 language rules used by AZLS and the web playground.</li>
+                <li>Known project, dependency and SDK types, specs and functions are resolved before they are colored.</li>
+                <li>Spec types and members, implementations, properties, decorators, type parameters, zone usage and import paths now have distinct semantic styles.</li>
+                <li>Unused declarations, parameters, properties and spec members are dimmed automatically.</li>
+                <li><code>where</code> is recognized as a contextual keyword only in valid declaration constraints.</li>
+                <li><code>self</code> and <code>it</code> remain identifiers and are styled as receiver parameters in their scopes.</li>
             </ul>
         """.trimIndent()
     }

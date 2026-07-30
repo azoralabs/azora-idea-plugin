@@ -1,7 +1,7 @@
 <idea-plugin>
     <id>org.azora.lang.idea</id>
     <name>Azora Language</name>
-    <version>0.0.5</version>
+    <version>0.0.6</version>
     <vendor email="support@azora.dev" url="https://azora.dev">AzoraLabs</vendor>
     <description><![CDATA[
         Full language support for the <b>Azora</b> programming language (0.0.4).
