@@ -493,12 +493,25 @@ class AzoraSymbolService(private val project: Project? = null) {
         return byModule
     }
 
-    /** The declared module of a file (`module a.b.c` / `export module a.b`). */
+    /** The declared module of a file (`module`/`mod`, including old SDK sources). */
     private fun moduleOf(text: String): String? = text.lineSequence()
         .map { it.trim() }
-        .firstOrNull { it.startsWith("module ") || it.startsWith("export module ") }
-        ?.removePrefix("export ")?.removePrefix("module ")?.trim()
+        .firstOrNull {
+            it.startsWith("module ") || it.startsWith("export module ") ||
+                it.startsWith("mod ") || it.startsWith("expose mod ") ||
+                it.startsWith("export mod ")
+        }
+        ?.removePrefix("export ")?.removePrefix("expose ")
+        ?.removePrefix("module ")?.removePrefix("mod ")?.trim()
         ?.substringBefore(' ')?.substringBefore('/')?.takeIf { it.isNotEmpty() }
+
+    /** Shifts nested realm members back to their locations in the source file. */
+    private fun shiftSymbolLocation(symbol: SymbolInfo, lineBase: Int, offsetBase: Int): SymbolInfo =
+        symbol.copy(
+            line = if (symbol.line > 0) symbol.line + lineBase else symbol.line,
+            offset = if (symbol.line > 0) symbol.offset + offsetBase else symbol.offset,
+            members = symbol.members.map { shiftSymbolLocation(it, lineBase, offsetBase) },
+        )
 
     /** Collects the referenceable declarations of a stdlib file, descending into
      *  `friend zone` scopes (where most stdlib symbols live). */
@@ -648,10 +661,14 @@ class AzoraSymbolService(private val project: Project? = null) {
                     result.add(SymbolInfo(name, SymbolKind.FAIL, members = variants, line = lineNum, offset = offset, filePath = filePath, isExposed = exposed, documentation = documentation))
                 }
 
-                matchesDecl(trimmed, "zone") -> {
-                    val (name, exposed) = extractNameAndExposed(trimmed, "zone")
+                matchesDecl(trimmed, "realm") || matchesDecl(trimmed, "zone") -> {
+                    val keyword = if (matchesDecl(trimmed, "realm")) "realm" else "zone"
+                    val (name, exposed) = extractNameAndExposed(trimmed, keyword)
                     val blockContent = extractBlockContent(lines, i)
+                    val lineBase = i + 1
+                    val offsetBase = content.lineOffset((i + 1).coerceAtMost(lines.lastIndex))
                     val members = extractSymbols(blockContent, filePath)
+                        .map { shiftSymbolLocation(it, lineBase, offsetBase) }
                     result.add(SymbolInfo(name, SymbolKind.SCOPE, members = members, line = lineNum, offset = offset, filePath = filePath, isExposed = exposed, documentation = documentation))
                 }
 
@@ -752,9 +769,9 @@ class AzoraSymbolService(private val project: Project? = null) {
 
                 isTopLevelVarFin(trimmed) -> {
                     val core = stripModifiers(trimmed)
-                    val keyword = listOf("var", "fin", "mem", "rem", "ret").firstOrNull { core.startsWith("$it ") } ?: "fin"
-                    val isMutable = keyword == "var" || keyword == "mem" || keyword == "rem"
-                    val exposed = trimmed.trimStart().startsWith("expose ")
+                    val keyword = listOf("var", "val", "fin", "mem", "rem", "ret").firstOrNull { core.startsWith("$it ") } ?: "fin"
+                    val isMutable = keyword == "var" || keyword == "val" || keyword == "mem" || keyword == "rem"
+                    val exposed = trimmed.trimStart().let { it.startsWith("expose ") || it.startsWith("exposed ") }
                     val afterKw = core.substringAfter("$keyword ").trim()
                     val name = afterKw.substringBefore(":").substringBefore("=").substringBefore(" ").trim()
                     val type = extractTypeAnnotation(afterKw) ?: inferTypeFromInitializer(afterKw)
@@ -819,8 +836,8 @@ class AzoraSymbolService(private val project: Project? = null) {
         val exposed = trimmed.startsWith("expose ")
         val core = stripModifiers(trimmed)
         val afterKeyword = skipGenericParams(core.removePrefix(keyword)).trimStart()
-        val name = if (keyword == "zone") {
-            afterKeyword.substringBefore("{").substringBefore(" ").trim()
+        val name = if (keyword == "zone" || keyword == "realm") {
+            afterKeyword.substringBefore("{").trim()
         } else {
             afterKeyword.substringBefore("(").substringBefore("{")
                 .substringBefore("<").substringBefore(":").substringBefore(" ").trim()
@@ -836,7 +853,11 @@ class AzoraSymbolService(private val project: Project? = null) {
      */
     private fun stripModifiers(trimmed: String): String {
         var s = trimmed
-        for (mod in listOf("expose ", "confine ", "protect ", "friend ", "inline ", "deepinline ", "noinline ", "unsafe ", "threadlocal ")) {
+        for (mod in listOf(
+            "expose ", "exposed ", "confine ", "confined ", "protect ", "protected ",
+            "friend ", "inline ", "deepinline ", "noinline ", "unsafe ", "threadlocal ",
+            "async ", "react ", "lazy ",
+        )) {
             if (s.startsWith(mod)) {
                 s = s.removePrefix(mod).trimStart()
             }
@@ -906,9 +927,10 @@ class AzoraSymbolService(private val project: Project? = null) {
      */
     private fun isTopLevelVarFin(trimmed: String): Boolean {
         if (trimmed.contains("{") && !trimmed.contains("=")) return false
-        return trimmed.startsWith("var ") || trimmed.startsWith("fin ") ||
+        return trimmed.startsWith("var ") || trimmed.startsWith("val ") || trimmed.startsWith("fin ") ||
                trimmed.startsWith("mem ") || trimmed.startsWith("rem ") || trimmed.startsWith("ret ") ||
-               trimmed.startsWith("expose var ") || trimmed.startsWith("expose fin ")
+               trimmed.startsWith("expose var ") || trimmed.startsWith("expose val ") || trimmed.startsWith("expose fin ") ||
+               trimmed.startsWith("exposed var ") || trimmed.startsWith("exposed val ") || trimmed.startsWith("exposed fin ")
     }
 
     /**

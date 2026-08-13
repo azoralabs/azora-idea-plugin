@@ -96,6 +96,7 @@ class AzoraResolverTest {
         assertEquals(1, resolved.size)
         // The local wins, so Ctrl-click lands on the binding, not the function.
         assertEquals(SymbolKind.FIN, resolved.single().kind)
+        assertEquals(source.indexOf("total = 42"), resolved.single().offset)
     }
 
     @Test
@@ -354,5 +355,22 @@ class AzoraResolverTest {
     fun `an unknown name resolves to nothing`() {
         val source = "func main() {\n    println(nothingHere)\n}"
         assertTrue(resolver.resolve("/test.az", source, offsetOf(source, "nothingHere")).isEmpty())
+    }
+
+    @Test
+    fun `same spelling resolves by use kind instead of first declaration`() {
+        val source = """
+            pack Token
+            func Token(): Int { return 1 }
+            func main() {
+                fin value: Token = Token()
+            }
+        """.trimIndent()
+
+        val constructor = resolver.resolve("/test.az", source, offsetOf(source, "Token", occurrence = 2))
+        assertEquals(SymbolKind.PACK, constructor.single().kind)
+
+        val call = resolver.resolve("/test.az", source, offsetOf(source, "Token", occurrence = 3))
+        assertEquals(SymbolKind.FUNC, call.single().kind)
     }
 }

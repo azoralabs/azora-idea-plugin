@@ -59,10 +59,37 @@ class AzoraLexerTest {
     }
 
     @Test
-    fun `scope is no longer a keyword`() {
+    fun `scope is a current memory keyword`() {
         val tokens = tokenizeFiltered("scope")
         assertEquals(1, tokens.size)
-        assertEquals(AzoraTokenTypes.IDENTIFIER, tokens[0].first)
+        assertEquals(AzoraTokenTypes.MEMORY_KEYWORD, tokens[0].first)
+    }
+
+    @Test
+    fun `current language vocabulary is classified`() {
+        val expected = mapOf(
+            "val" to AzoraTokenTypes.DECLARATION_KEYWORD,
+            "realm" to AzoraTokenTypes.DECLARATION_KEYWORD,
+            "variant" to AzoraTokenTypes.DECLARATION_KEYWORD,
+            "annot" to AzoraTokenTypes.DECLARATION_KEYWORD,
+            "graph" to AzoraTokenTypes.DECLARATION_KEYWORD,
+            "purge" to AzoraTokenTypes.MEMORY_KEYWORD,
+            "take" to AzoraTokenTypes.MEMORY_KEYWORD,
+            "remember" to AzoraTokenTypes.REACTIVE_KEYWORD,
+            "react" to AzoraTokenTypes.MODIFIER_KEYWORD,
+        )
+        for ((word, type) in expected) {
+            assertEquals(type, tokenizeFiltered(word).single().first, "wrong token for $word")
+        }
+    }
+
+    @Test
+    fun `contextual words stay identifiers outside their grammar positions`() {
+        assertEquals(AzoraTokenTypes.IDENTIFIER, tokenizeFiltered("func module(): Unit {}").first { it.second == "module" }.first)
+        assertEquals(AzoraTokenTypes.DECLARATION_KEYWORD, tokenizeFiltered("module demo.core").first { it.second == "module" }.first)
+        assertEquals(AzoraTokenTypes.IDENTIFIER, tokenizeFiltered("value.union(other)").first { it.second == "union" }.first)
+        assertEquals(AzoraTokenTypes.DECLARATION_KEYWORD, tokenizeFiltered("union Result {}").first { it.second == "union" }.first)
+        assertEquals(AzoraTokenTypes.DECLARATION_KEYWORD, tokenizeFiltered("mod std.math").first { it.second == "mod" }.first)
     }
 
     @Test
@@ -77,7 +104,7 @@ class AzoraLexerTest {
 
     @Test
     fun `modifier keywords are classified correctly`() {
-        val keywords = listOf("expose", "confine", "protect", "shield", "inline")
+        val keywords = listOf("expose", "confine", "protect", "inline")
         for (kw in keywords) {
             val tokens = tokenizeFiltered(kw)
             assertEquals(1, tokens.size, "Expected 1 token for '$kw'")

@@ -69,6 +69,9 @@ object AzoraMacroScanner {
     /** `infx name` — the dedicated infix-operator declaration form. */
     private val infxDecl = Regex("""(?m)^\s*(?:\w+\s+)*?infx\s+([A-Za-z_$][\w$]*)""")
 
+    /** `macro $Base @with $Filter => …` — the current arm declaration form. */
+    private val macroDecl = Regex("""(?m)^\s*macro\b[^\n]*?@([A-Za-z_$][\w$]*)""")
+
     /**
      * Scans [text] for every macro it declares.
      *
@@ -76,7 +79,9 @@ object AzoraMacroScanner {
      * @return the prefix and infix macro names declared in it.
      */
     fun scan(text: String): AzoraMacros {
-        if (!text.contains("meta") && !text.contains("infx")) return AzoraMacros.EMPTY
+        if (!text.contains("meta") && !text.contains("infx") && !text.contains("macro")) {
+            return AzoraMacros.EMPTY
+        }
 
         val prefix = linkedSetOf<String>()
         val infix = linkedSetOf<String>()
@@ -84,6 +89,7 @@ object AzoraMacroScanner {
         prefixMeta.findAll(text).forEach { normalizeName(it.groupValues[1])?.let(prefix::add) }
         infixMeta.findAll(text).forEach { normalizeName(it.groupValues[1])?.let(infix::add) }
         infxDecl.findAll(text).forEach { normalizeName(it.groupValues[1])?.let(infix::add) }
+        macroDecl.findAll(text).forEach { normalizeName(it.groupValues[1])?.let(infix::add) }
 
         for (match in typeMeta.findAll(text)) {
             val body = blockBodyAfter(text, match.range.last) ?: continue

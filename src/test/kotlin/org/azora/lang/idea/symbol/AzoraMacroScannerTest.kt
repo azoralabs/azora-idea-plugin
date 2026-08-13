@@ -94,6 +94,18 @@ class AzoraMacroScannerTest {
     }
 
     @Test
+    fun `finds current macro arm declarations`() {
+        val macros = AzoraMacroScanner.scan(
+            """
+            macro ${'$'}Base @with ${'$'}Filter => ${'$'}Base
+            macro ${'$'}Base @without ${'$'}Filter => ${'$'}Base
+            """.trimIndent()
+        )
+
+        assertEquals(setOf("with", "without"), macros.infix)
+    }
+
+    @Test
     fun `source with no meta declarations declares no macros`() {
         val macros = AzoraMacroScanner.scan(
             """

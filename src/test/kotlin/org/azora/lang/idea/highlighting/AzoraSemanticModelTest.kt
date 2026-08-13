@@ -220,17 +220,19 @@ class AzoraSemanticModelTest {
     }
 
     @Test
-    fun `import paths and zone uses are italic but zone declarations are not`() {
+    fun `import paths and complete realm paths are italic`() {
         val source = """
             import std.container.tuple
-            friend zone std::container {
+            realm ide::editor {
                 func make() { std::println("ok") }
             }
         """.trimIndent()
 
         assertEquals(AzoraSyntaxHighlighter.MODULE_PATH, keyFor(source, "std", occurrence = 0))
-        assertNull(keyFor(source, "std", occurrence = 1))
-        assertEquals(AzoraSyntaxHighlighter.ZONE_USAGE, keyFor(source, "std", occurrence = 2))
+        assertEquals(AzoraSyntaxHighlighter.ZONE_USAGE, keyFor(source, "ide", occurrence = 0))
+        assertEquals(AzoraSyntaxHighlighter.ZONE_USAGE, keyFor(source, "editor", occurrence = 0))
+        assertEquals(AzoraSyntaxHighlighter.ZONE_USAGE, keyFor(source, "std", occurrence = 1))
+        assertEquals(AzoraSyntaxHighlighter.ZONE_USAGE, keyFor(source, "println", occurrence = 0))
     }
 
     @Test
@@ -255,6 +257,19 @@ class AzoraSemanticModelTest {
     @Test
     fun `a member access is never colored as a macro`() {
         assertNotEquals(AzoraSyntaxHighlighter.MACRO, keyFor("fin v = point.with", "with", AzoraMacros(infix = setOf("with"))))
+    }
+
+    @Test
+    fun `a local symbol wins over a same-named callable for coloring`() {
+        val source = """
+            func render(): Int { return 1 }
+            func main() {
+                fin render = 2
+                render()
+            }
+        """.trimIndent()
+
+        assertEquals(AzoraSyntaxHighlighter.IDENTIFIER, keyFor(source, "render", occurrence = 2))
     }
 
     @Test

@@ -26,7 +26,7 @@ package org.azora.lang.idea.completion
 data class AzoraSnippet(val trigger: String, val description: String, val body: String)
 
 /**
- * The Azora code templates, covering every declaration form in the 0.0.4
+ * The Azora code templates, covering every declaration form in the 0.0.5
  * grammar. The same set is mirrored as IDE live templates in
  * `liveTemplates/Azora.xml`, which supports tab stops; these completion entries
  * exist so the forms are discoverable while typing.

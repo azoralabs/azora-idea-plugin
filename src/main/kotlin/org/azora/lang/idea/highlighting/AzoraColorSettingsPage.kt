@@ -155,7 +155,7 @@ class AzoraColorSettingsPage : ColorSettingsPage {
              * A point in two dimensions.
              * @param x the horizontal coordinate.
              */
-            @Stable(sinceAzora: "0.0.4")
+            @Stable(sinceAzora: "0.0.5")
             pack <typeDecl>Point</typeDecl> {
                 var <field>x</field>: <type>Real</type> = 0.0
                 var <field>y</field>: <type>Real</type> = 0.0

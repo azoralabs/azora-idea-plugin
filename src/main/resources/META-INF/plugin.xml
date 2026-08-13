@@ -1,17 +1,17 @@
 <idea-plugin>
     <id>org.azora.lang.idea</id>
     <name>Azora Language</name>
-    <version>0.0.6</version>
+    <version>0.0.7</version>
     <vendor email="support@azora.dev" url="https://azora.dev">AzoraLabs</vendor>
     <description><![CDATA[
-        Full language support for the <b>Azora</b> programming language (0.0.4).
+        Full language support for the <b>Azora</b> programming language (0.0.5).
 
         <ul>
             <li>Syntax highlighting in Azora's own palette — shared with the Azora code playground — with bold keywords, purple macros, colored string interpolation, and highlighted smart casts</li>
             <li>Macros are discovered from the <code>meta</code> declarations in your project, the SDK, and your dependencies, so a keyword-named macro is purple where it is a macro and a keyword everywhere else</li>
             <li>Context-aware completion: real members after <code>.</code> and <code>::</code>, real module paths in imports, a type's fields in its constructor call</li>
             <li>Live templates for every Azora declaration form</li>
-            <li>Go-to-declaration and quick documentation that scope names the way the language does</li>
+            <li>Go-to-declaration and quick documentation that resolve symbols by scope and use-site context, including local shadowing, members, imports, stdlib, and dependencies</li>
             <li>Inferred-type inlay hints, toggleable per project</li>
             <li>Errors underlined precisely, with quick fixes</li>
             <li>Run gutter icons on <code>func main</code>, <code>task main</code>, and every <code>test</code></li>

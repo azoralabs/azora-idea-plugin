@@ -240,12 +240,26 @@ class AzoraLexerAdapter : LexerBase() {
                             while (pos < len && source[pos].isDigit()) pos++
                         }
                     }
-                    // Type suffix: i8, i16, i32, i64, u8, u16, u32, u64, f32, f64
-                    if (pos < len && (source[pos] == 'i' || source[pos] == 'u' || source[pos] == 'f')) {
-                        val suffixStart = pos
+                    // Canonical Azora suffixes (`b`, `ub`, `s`, `us`, `u`,
+                    // `L`, `uL`, `c`, `uc`, `f`, `D`) plus the older i/u/f
+                    // width spellings accepted by existing projects.
+                    val suffixStart = pos
+                    if (pos < len && source[pos] == 'u') {
+                        pos++
+                        if (pos < len && source[pos].isDigit()) {
+                            // Legacy `u8`/`u32`/`u64` spelling.
+                            while (pos < len && source[pos].isDigit()) pos++
+                        } else if (pos >= len || source[pos].isWhitespace() || source[pos] in "bLc") {
+                            // Canonical `ub`, `uL`, and `uc` spellings.
+                            if (pos < len && source[pos] in "bLc") pos++
+                        } else {
+                            pos = suffixStart
+                        }
+                    } else if (pos < len && source[pos] in "bsLcufDi") {
+                        val suffix = source[pos]
                         pos++
                         while (pos < len && source[pos].isDigit()) pos++
-                        if (source[suffixStart] == 'f') isReal = true
+                        if (suffix == 'f' || suffix == 'D') isReal = true
                     }
                     val type = if (isReal) AzoraTokenTypes.REAL_LITERAL else AzoraTokenTypes.INT_LITERAL
                     result.add(LexToken(type, start + startOffset, pos + startOffset))
@@ -437,10 +451,29 @@ class AzoraLexerAdapter : LexerBase() {
             '%' -> if (next == '=') AzoraTokenTypes.OPERATOR to 2 else AzoraTokenTypes.OPERATOR to 1
             '=' -> if (next == '=') AzoraTokenTypes.OPERATOR to 2 else AzoraTokenTypes.OPERATOR to 1
             '!' -> if (next == '=') AzoraTokenTypes.OPERATOR to 2 else AzoraTokenTypes.OPERATOR to 1
-            '<' -> if (next == '=') AzoraTokenTypes.OPERATOR to 2 else AzoraTokenTypes.OPERATOR to 1
-            '>' -> if (next == '=') AzoraTokenTypes.OPERATOR to 2 else AzoraTokenTypes.OPERATOR to 1
-            '&' -> if (next == '&') AzoraTokenTypes.OPERATOR to 2 else AzoraTokenTypes.OPERATOR to 1
-            '|' -> if (next == '|') AzoraTokenTypes.OPERATOR to 2 else AzoraTokenTypes.OPERATOR to 1
+            '<' -> when {
+                next == '=' && next2 == '>' -> AzoraTokenTypes.OPERATOR to 3
+                next == '<' && next2 == '=' -> AzoraTokenTypes.OPERATOR to 3
+                next == '<' -> AzoraTokenTypes.OPERATOR to 2
+                next == '=' -> AzoraTokenTypes.OPERATOR to 2
+                else -> AzoraTokenTypes.OPERATOR to 1
+            }
+            '>' -> when {
+                next == '>' && next2 == '=' -> AzoraTokenTypes.OPERATOR to 3
+                next == '>' -> AzoraTokenTypes.OPERATOR to 2
+                next == '=' -> AzoraTokenTypes.OPERATOR to 2
+                else -> AzoraTokenTypes.OPERATOR to 1
+            }
+            '&' -> when (next) {
+                '&', '=' -> AzoraTokenTypes.OPERATOR to 2
+                else -> AzoraTokenTypes.OPERATOR to 1
+            }
+            '|' -> when (next) {
+                '|', '=' -> AzoraTokenTypes.OPERATOR to 2
+                else -> AzoraTokenTypes.OPERATOR to 1
+            }
+            '^' -> if (next == '=') AzoraTokenTypes.OPERATOR to 2 else AzoraTokenTypes.OPERATOR to 1
+            '~' -> AzoraTokenTypes.OPERATOR to 1
             '?' -> when {
                 next == '=' -> AzoraTokenTypes.OPERATOR to 2
                 next == '?' -> AzoraTokenTypes.OPERATOR to 2
@@ -481,57 +514,83 @@ class AzoraLexerAdapter : LexerBase() {
      */
     private fun markTypeParameters(tokens: List<LexToken>): List<LexToken> {
         val result = tokens.toMutableList()
-        // Keywords that can have generic parameters
-        val genericKeywords = setOf(
-            AzoraTokenTypes.DECLARATION_KEYWORD // func, pack, impl, enum, slot, etc.
-        )
-
-        val typeParamNames = mutableSetOf<String>()
+        data class GenericScope(val names: Set<String>, val start: Int, val end: Int)
+        val scopes = mutableListOf<GenericScope>()
         var i = 0
         while (i < result.size) {
             val tok = result[i]
             // Look for keyword followed by < (skipping whitespace)
-            if (tok.type in genericKeywords) {
+            if (tok.type == AzoraTokenTypes.DECLARATION_KEYWORD) {
                 var j = i + 1
                 // Skip whitespace
                 while (j < result.size && result[j].type == AzoraTokenTypes.WHITE_SPACE) j++
                 // Check for <
                 if (j < result.size && isLessThan(result[j])) {
+                    val headerStart = j
                     j++ // skip <
-                    // Mark identifiers inside <...> as TYPE_PARAMETER
                     var depth = 1
+                    var expectsName = true
+                    val names = linkedSetOf<String>()
                     while (j < result.size && depth > 0) {
                         val t = result[j]
                         when {
-                            isLessThan(t) -> depth++
+                            isLessThan(t) -> {
+                                depth++
+                                expectsName = true
+                            }
                             isGreaterThan(t) -> depth--
-                            t.type == AzoraTokenTypes.IDENTIFIER -> {
+                            t.type == AzoraTokenTypes.COMMA && depth == 1 -> expectsName = true
+                            t.type == AzoraTokenTypes.IDENTIFIER && depth == 1 && expectsName -> {
                                 val name = buffer.subSequence(t.start, t.end).toString()
                                 result[j] = LexToken(AzoraTokenTypes.TYPE_PARAMETER, t.start, t.end)
-                                typeParamNames.add(name)
+                                names.add(name)
+                                expectsName = false
                             }
                         }
                         j++
+                    }
+                    if (names.isNotEmpty()) {
+                        var end = result.lastIndex
+                        var body = j
+                        while (body < result.size && result[body].type == AzoraTokenTypes.WHITE_SPACE) body++
+                        if (body < result.size && result[body].type == AzoraTokenTypes.L_BRACE) {
+                            end = matchingBrace(result, body) ?: result.lastIndex
+                        }
+                        scopes.add(GenericScope(names, headerStart, end))
                     }
                 }
             }
             i++
         }
 
-        // Second pass: mark usages of type parameter names in the token stream
-        if (typeParamNames.isNotEmpty()) {
-            for (k in result.indices) {
+        // Mark only usages inside the declaration that introduced the generic.
+        // A file may legitimately reuse `T` in unrelated declarations.
+        for (scope in scopes) {
+            for (k in scope.start..scope.end.coerceAtMost(result.lastIndex)) {
                 val tok = result[k]
                 if (tok.type == AzoraTokenTypes.IDENTIFIER) {
                     val name = buffer.subSequence(tok.start, tok.end).toString()
-                    if (name in typeParamNames) {
-                        result[k] = LexToken(AzoraTokenTypes.TYPE_PARAMETER, tok.start, tok.end)
-                    }
+                    if (name in scope.names) result[k] = LexToken(AzoraTokenTypes.TYPE_PARAMETER, tok.start, tok.end)
                 }
             }
         }
 
         return result
+    }
+
+    /** Finds the closing brace for a declaration body in the flat token list. */
+    private fun matchingBrace(tokens: List<LexToken>, open: Int): Int? {
+        var depth = 0
+        for (i in open until tokens.size) {
+            when (tokens[i].type) {
+                AzoraTokenTypes.L_BRACE -> depth++
+                AzoraTokenTypes.R_BRACE -> {
+                    depth--
+                    if (depth == 0) return i
+                }
+            }
+        }
+        return null
     }
 
     /** Checks if an operator token is a single `<` character. */
@@ -564,6 +623,13 @@ class AzoraLexerAdapter : LexerBase() {
         if (previous in DECLARATION_NAME_PREFIXES) return null
         return when (word) {
             "where" -> if (isContextualWhere(source, start)) AzoraTokenTypes.CONTROL_KEYWORD else null
+            "mod" -> if (isContextualMod(source, start)) AzoraTokenTypes.DECLARATION_KEYWORD else null
+            "module" -> if (isContextualModule(source, start)) AzoraTokenTypes.DECLARATION_KEYWORD else null
+            "union" -> if (isContextualUnion(source, start)) AzoraTokenTypes.DECLARATION_KEYWORD else null
+            "async" -> if (nextWord(source, start + word.length) == "func") AzoraTokenTypes.MODIFIER_KEYWORD else null
+            "without" -> if (lineContainsBefore(source, start, "binds")) AzoraTokenTypes.CONTROL_KEYWORD else null
+            "derives", "includes", "binds", "requires" ->
+                if (isContextualClause(source, start)) AzoraTokenTypes.CONTROL_KEYWORD else null
             else -> null
         }
     }
@@ -635,6 +701,69 @@ class AzoraLexerAdapter : LexerBase() {
         return false
     }
 
+    /** `module` is contextual and only starts a module declaration. */
+    private fun isContextualModule(source: String, start: Int): Boolean {
+        if (nextWord(source, start + "module".length) == null) return false
+        val lineStart = source.lastIndexOf('\n', start - 1).let { if (it < 0) 0 else it + 1 }
+        val prefix = source.substring(lineStart, start).trim()
+        return prefix.isEmpty() || prefix.split(Regex("\\s+")).all {
+            it in setOf("exposed", "confined", "export")
+        }
+    }
+
+    /** Legacy SDK sources spell module declarations as `mod path`. */
+    private fun isContextualMod(source: String, start: Int): Boolean {
+        if (nextWord(source, start + "mod".length) == null) return false
+        val lineStart = source.lastIndexOf('\n', start - 1).let { if (it < 0) 0 else it + 1 }
+        val prefix = source.substring(lineStart, start).trim()
+        return prefix.isEmpty() || prefix.split(Regex("\\s+")).all {
+            it in setOf("expose", "confined", "export")
+        }
+    }
+
+    /** `union Name` is a declaration; `value.union()` is not. */
+    private fun isContextualUnion(source: String, start: Int): Boolean {
+        val previous = previousWord(source, start)
+        if (source.substring(0, start).trimEnd().endsWith(".")) return false
+        val next = nextWord(source, start + "union".length) ?: return false
+        return next.firstOrNull()?.isUpperCase() == true && previous !in setOf(".", "::")
+    }
+
+    /** Clause words are keywords only after a declaration header. */
+    private fun isContextualClause(source: String, start: Int): Boolean {
+        val lineStart = source.lastIndexOf('\n', start - 1).let { if (it < 0) 0 else it + 1 }
+        val prefix = source.substring(lineStart, start)
+        if (prefix.trimEnd().endsWith('.') || prefix.trimEnd().endsWith("::")) return false
+        var parenDepth = 0
+        var bracketDepth = 0
+        for (c in prefix) {
+            when (c) {
+                '(' -> parenDepth++
+                ')' -> parenDepth = (parenDepth - 1).coerceAtLeast(0)
+                '[' -> bracketDepth++
+                ']' -> bracketDepth = (bracketDepth - 1).coerceAtLeast(0)
+            }
+        }
+        if (parenDepth > 0 || bracketDepth > 0) return false
+        return prefix.split(Regex("[^A-Za-z0-9_$]+"))
+            .any { it in CLAUSE_DECLARATION_HEADS }
+    }
+
+    private fun lineContainsBefore(source: String, start: Int, word: String): Boolean {
+        val lineStart = source.lastIndexOf('\n', start - 1).let { if (it < 0) 0 else it + 1 }
+        return Regex("\\b${Regex.escape(word)}\\b").containsMatchIn(source.substring(lineStart, start))
+    }
+
+    /** Reads the next identifier after [from], or `null` when punctuation intervenes. */
+    private fun nextWord(source: String, from: Int): String? {
+        var i = from
+        while (i < source.length && source[i].isWhitespace()) i++
+        if (i >= source.length || !(source[i].isLetter() || source[i] == '_' || source[i] == '$')) return null
+        val begin = i++
+        while (i < source.length && (source[i].isLetterOrDigit() || source[i] == '_' || source[i] == '$')) i++
+        return source.substring(begin, i)
+    }
+
     private fun previousWord(source: String, start: Int): String? {
         var i = start - 1
         while (i >= 0 && source[i].isWhitespace()) i--
@@ -667,15 +796,20 @@ class AzoraLexerAdapter : LexerBase() {
         private val SOFT_KEYWORDS = AzoraLanguageFacts.softKeywords
 
         private val DECLARATION_NAME_PREFIXES = setOf(
-            "func", "task", "flow", "pack", "enum", "slot", "fail",
-            "spec", "zone", "module", "prop", "var", "fin", "let", "typealias",
-            "test", "deco", "impl", "type",
+            "func", "pack", "enum", "variant", "error", "spec", "realm", "scope",
+            "module", "prop", "var", "val", "fin", "let", "typealias", "test",
+            "annot", "impl", "union",
         )
 
         /** Declaration heads that may legally introduce a `where` clause. */
         private val WHERE_DECLARATION_HEADS = setOf(
-            "func", "task", "flow", "infx", "pack", "node", "solo",
-            "spec", "deco", "impl", "prop", "typealias",
+            "func", "pack", "enum", "solo", "spec", "annot", "impl", "prop",
+            "variant", "typealias", "union",
+        )
+
+        private val CLAUSE_DECLARATION_HEADS = setOf(
+            "pack", "enum", "variant", "spec", "annot", "impl", "func", "typealias",
+            "graph", "realm",
         )
 
         /**

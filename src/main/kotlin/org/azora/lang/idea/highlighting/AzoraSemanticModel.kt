@@ -55,12 +55,15 @@ data class AzoraSemanticSymbols(
 object AzoraSemanticModel {
 
     /** Declaration keywords whose following name is a function-like symbol. */
-    private val FUNCTION_DECL_KEYWORDS = setOf("func", "task", "flow", "infx")
+    private val FUNCTION_DECL_KEYWORDS = setOf("func", "task", "flow", "infx", "hook")
 
     /** Declaration keywords whose following name is a type-like symbol. */
     private val TYPE_DECL_KEYWORDS = setOf(
-        "pack", "enum", "slot", "fail", "typealias", "type", "wrap", "solo",
+        "pack", "enum", "variant", "union", "slot", "fail", "error", "typealias", "type", "wrap", "solo",
     )
+
+    /** Namespace declarations whose path is styled as one semantic unit. */
+    private val REALM_DECL_KEYWORDS = setOf("realm", "zone")
 
     /** Binding declarations whose names may be dimmed when unused. */
     private val BINDING_KEYWORDS = setOf("var", "fin", "let", "mem", "rem", "ret")
@@ -224,6 +227,16 @@ object AzoraSemanticModel {
             return AzoraSyntaxHighlighter.PARAMETER
         }
         if (semantics.variableByToken.containsKey(index)) return AzoraSyntaxHighlighter.IDENTIFIER
+
+        // A local binding is a symbol in its own scope, even when its spelling
+        // is also used by a top-level function or type elsewhere in the file.
+        if (isLocalBindingReference(tokens, index, semantics)) {
+            return if (isParameterReference(tokens, index, semantics.parameters)) {
+                AzoraSyntaxHighlighter.PARAMETER
+            } else {
+                AzoraSyntaxHighlighter.IDENTIFIER
+            }
+        }
 
         val isCall = next != null && next.type == AzoraTokenTypes.L_PAREN && next.start == token.end
         if (token.text in semantics.specTypes) return AzoraSyntaxHighlighter.SPEC_TYPE
@@ -457,7 +470,8 @@ object AzoraSemanticModel {
     private fun modulePathTokens(tokens: List<AzoraToken>): Set<Int> {
         val result = linkedSetOf<Int>()
         for (i in tokens.indices) {
-            if (!AzoraTokenTypes.KEYWORDS.contains(tokens[i].type) || tokens[i].text != "import") continue
+            if (!AzoraTokenTypes.KEYWORDS.contains(tokens[i].type) ||
+                tokens[i].text !in setOf("import", "use", "module", "mod")) continue
             var cursor = i + 1
             while (cursor < tokens.size) {
                 val token = tokens[cursor]
@@ -470,17 +484,66 @@ object AzoraSemanticModel {
         return result
     }
 
-    /** Lowercase zone path segments used before `::`, excluding zone declarations. */
+    /**
+     * All segments in a realm-qualified path are one semantic span. The old
+     * implementation only marked the first lowercase segment, leaving
+     * `realm ide::editor` half-styled and making `std::math::sqrt` inconsistent.
+     */
     private fun zoneUsageTokens(tokens: List<AzoraToken>): Set<Int> {
         val result = linkedSetOf<Int>()
         for (i in tokens.indices) {
             val token = tokens[i]
-            if (token.type != AzoraTokenTypes.IDENTIFIER || token.text.firstOrNull()?.isLowerCase() != true) continue
-            val next = nextMeaningful(tokens, i, sameLine = true) ?: continue
-            if (!isOperator(tokens[next], "::") || isZoneDeclarationSegment(tokens, i)) continue
-            result.add(i)
+            if (token.type != AzoraTokenTypes.IDENTIFIER) continue
+            if (isRealmDeclarationSegment(tokens, i)) {
+                addRealmPath(tokens, i, result)
+                continue
+            }
+            val previous = prevMeaningful(tokens, i, sameLine = true)
+            val next = nextMeaningful(tokens, i, sameLine = true)
+            if ((previous != null && isOperator(tokens[previous], "::")) ||
+                (next != null && isOperator(tokens[next], "::"))) {
+                addRealmPath(tokens, i, result)
+            }
         }
         return result
+    }
+
+    private fun addRealmPath(tokens: List<AzoraToken>, index: Int, result: MutableSet<Int>) {
+        var first = index
+        while (true) {
+            val separator = prevMeaningful(tokens, first, sameLine = true)
+            val segment = separator?.let { prevMeaningful(tokens, it, sameLine = true) }
+            if (separator == null || !isOperator(tokens[separator], "::") || segment == null ||
+                tokens[segment].type != AzoraTokenTypes.IDENTIFIER) break
+            first = segment
+        }
+        var cursor = first
+        while (cursor < tokens.size) {
+            if (tokens[cursor].type == AzoraTokenTypes.IDENTIFIER) result.add(cursor)
+            val separator = nextMeaningful(tokens, cursor, sameLine = true) ?: break
+            if (!isOperator(tokens[separator], "::")) break
+            val segment = nextMeaningful(tokens, separator, sameLine = true) ?: break
+            if (tokens[segment].type != AzoraTokenTypes.IDENTIFIER) break
+            cursor = segment
+        }
+    }
+
+    private fun isRealmDeclarationSegment(tokens: List<AzoraToken>, index: Int): Boolean {
+        var cursor = index - 1
+        while (cursor >= 0) {
+            val token = tokens[cursor]
+            if (AzoraTokenTypes.IGNORABLE.contains(token.type)) {
+                cursor--
+                continue
+            }
+            if (token.text in REALM_DECL_KEYWORDS && AzoraTokenTypes.KEYWORDS.contains(token.type)) return true
+            if (token.type == AzoraTokenTypes.IDENTIFIER || isOperator(token, "::")) {
+                cursor--
+                continue
+            }
+            break
+        }
+        return false
     }
 
     private fun isZoneDeclarationSegment(tokens: List<AzoraToken>, index: Int): Boolean {
@@ -506,6 +569,14 @@ object AzoraSemanticModel {
         index: Int,
         parameters: List<ScopedDeclaration>,
     ): Boolean = parameters.any {
+        index != it.tokenIndex && index in it.scope && tokens[index].text == it.name
+    }
+
+    private fun isLocalBindingReference(
+        tokens: List<AzoraToken>,
+        index: Int,
+        semantics: Semantics,
+    ): Boolean = semantics.variables.any {
         index != it.tokenIndex && index in it.scope && tokens[index].text == it.name
     }
 

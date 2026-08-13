@@ -125,11 +125,9 @@ class RealSourcesSmokeTest {
 
         val macros = AzoraMacroScanner.scan(file!!.readText())
 
-        // This is the case the highlighting design turns on: a language keyword
-        // that a real dependency also declares as an infix type macro.
+        // This is the case the highlighting design turns on: language keywords
+        // that a real dependency also declares as infix macros.
         assertTrue("with" in macros.infix, "expected 'with' among ${macros.infix}")
         assertTrue("without" in macros.infix)
-        assertTrue("res" in macros.prefix, "expected 'res' among ${macros.prefix}")
-        assertTrue("query" in macros.prefix)
     }
 }

@@ -27,36 +27,41 @@ package org.azora.lang.idea
 object AzoraLanguageFacts {
 
     /** The Azora language version this plugin's lexical model tracks. */
-    const val LANGUAGE_VERSION = "0.0.4"
+    const val LANGUAGE_VERSION = "0.0.5"
 
+    /** Reserved declaration, binding, and namespace words in the current lexer. */
     val declarationKeywords = setOf(
-        "var", "fin", "let", "func", "task", "flow", "test",
-        "enum", "slot", "pack", "impl", "spec", "type", "typealias",
-        "prop", "oper", "ctor", "dtor", "deco", "meta", "infx",
-        "zone", "friend", "module", "export", "import", "use",
-        "solo", "wrap", "bridge", "fail", "threadlocal",
+        "var", "val", "let", "fin", "func", "pack", "enum", "variant", "impl", "spec", "typealias",
+        "prop", "ctor", "dtor", "oper", "annot", "bind", "bridge", "solo",
+        "graph", "inject", "import", "use", "export", "realm", "zone", "scope", "macro", "test",
+        "error", "type", "wrap", "threadlocal", "friend", "meta", "infx",
+        // Compatibility spellings still present in installed 0.0.x SDKs.
+        "task", "flow", "slot", "fail", "deco",
     )
 
+    /** Reserved words that introduce expressions, control flow, or contracts. */
     val controlKeywords = setOf(
-        "if", "else", "for", "loop", "while", "when",
-        "in", "by", "reverse", "with",
-        "return", "break", "continue", "try", "catch", "throw", "defer",
-        "guard", "is", "as", "await", "launch", "yield",
-        "flip", "flop", "assert", "trace", "panic", "rescue",
+        "return", "if", "else", "for", "while", "loop", "in", "by", "reverse",
+        "break", "continue", "when", "throw", "try", "catch", "rescue", "defer",
+        "await", "delay", "as", "is", "with", "assert", "trace", "panic",
+        "launch", "yield",
     )
 
+    /** Reserved words that alter declaration visibility or evaluation. */
     val modifierKeywords = setOf(
-        "expose", "confine", "protect", "protected", "shield", "opaque",
+        "expose", "exposed", "protect", "protected", "confine", "confined",
         "inline", "deepinline", "noinline",
-        "isolated", "bind", "inject", "unsafe", "out",
+        "threadlocal", "lazy", "factory", "derive", "out", "react",
     )
 
+    /** Reserved words for allocation, ownership, and unsafe operations. */
     val memoryKeywords = setOf(
-        "alloc", "drop", "deref", "unsafe",
+        "alloc", "purge", "take", "unsafe", "scope", "drop", "deref",
     )
 
+    /** Reserved words for reactive state and effects. */
     val reactiveKeywords = setOf(
-        "mem", "rem", "ret", "effect",
+        "mem", "rem", "ret", "remember", "retain", "preserve", "effect",
     )
 
     val literalKeywords = setOf("true", "false", "null")
@@ -71,11 +76,14 @@ object AzoraLanguageFacts {
         memoryKeywords + reactiveKeywords + literalKeywords
 
     /**
-     * Words that are keywords only in some positions and ordinary identifiers
-     * elsewhere. `where` is not in the compiler's keyword table at all — the
-     * parser matches it contextually — so it must never be colored blindly.
+     * Contextual words from the compiler vocabulary. The lexer colors these
+     * only where the grammar gives them keyword meaning; elsewhere they remain
+     * ordinary identifiers so names such as `Set.union` continue to work.
      */
-    val softKeywords = setOf("where")
+    val softKeywords = setOf(
+        "mod", "module", "union", "async", "where", "without", "replace", "escaping",
+        "derives", "includes", "binds", "requires", "lend", "reflect",
+    )
 
     val allCompletionKeywords = (hardKeywords + softKeywords).sorted()
 
@@ -99,7 +107,8 @@ object AzoraLanguageFacts {
     // information is indexed from the installed SDK's real `.az` sources by
     // `AzoraSymbolService`, so completion, navigation, and hover always
     // reflect the installed stdlib. Macros are likewise discovered from real
-    // `meta` declarations in the project and SDK — see `AzoraMacroIndex`.
+    // `meta`, `infx`, and `macro` declarations in the project and SDK — see
+    // `AzoraMacroIndex`.
 }
 
 data class BuiltinAnnotation(

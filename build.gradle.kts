@@ -5,7 +5,7 @@ plugins {
 }
 
 group = "org.azora.lang"
-version = "0.0.6"
+version = "0.0.7"
 
 repositories {
     mavenCentral()
@@ -46,12 +46,12 @@ intellijPlatform {
         }
         changeNotes = """
             <ul>
-                <li>IntelliSense and semantic highlighting now follow the Azora 0.0.4 language rules used by AZLS and the web playground.</li>
-                <li>Known project, dependency and SDK types, specs and functions are resolved before they are colored.</li>
-                <li>Spec types and members, implementations, properties, decorators, type parameters, zone usage and import paths now have distinct semantic styles.</li>
-                <li>Unused declarations, parameters, properties and spec members are dimmed automatically.</li>
-                <li><code>where</code> is recognized as a contextual keyword only in valid declaration constraints.</li>
-                <li><code>self</code> and <code>it</code> remain identifiers and are styled as receiver parameters in their scopes.</li>
+                <li>Updated lexical and contextual highlighting for the current Azora vocabulary, including realms, variants, annotations, graphs, ownership, reactive, and clause keywords.</li>
+                <li>Realm-qualified paths such as <code>ide::editor</code> now receive one consistent semantic style across every segment.</li>
+                <li>Stdlib and dependency modules are indexed from both current <code>module</code>/<code>realm</code> sources and legacy <code>mod</code>/<code>zone</code> SDK sources.</li>
+                <li>Go-to-declaration now resolves the symbol at the use site, respecting local shadowing, member receivers, types, callables, imports, and external source locations.</li>
+                <li>Fixed navigation targets for local bindings and parameters, including exact declaration offsets.</li>
+                <li>Generic type parameters are scoped to their declaring function or type instead of coloring unrelated same-named identifiers.</li>
             </ul>
         """.trimIndent()
     }

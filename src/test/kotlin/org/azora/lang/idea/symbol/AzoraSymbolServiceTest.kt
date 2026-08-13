@@ -166,6 +166,25 @@ class AzoraSymbolServiceTest {
         assertTrue(zone.members.any { it.name == "abs" })
     }
 
+    @Test
+    fun `extracts current realm paths and keeps member locations`() {
+        val source = """
+            realm ide::editor {
+                func open(): Unit {}
+            }
+        """.trimIndent()
+        val realm = service.getSymbolsForFile("realm.az", source).single { it.kind == SymbolKind.SCOPE }
+
+        assertEquals("ide::editor", realm.name)
+        assertEquals(2, realm.members.single { it.name == "open" }.line)
+    }
+
+    @Test
+    fun `recognizes legacy and current module declarations`() {
+        assertEquals("std.math", service.moduleOfFile("mod std.math\n"))
+        assertEquals("std.math", service.moduleOfFile("module std.math\n"))
+    }
+
     // ── Var/Fin declarations ───────────────────────────────────────────
 
     @Test
