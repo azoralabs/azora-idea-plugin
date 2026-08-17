@@ -26,8 +26,10 @@ import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiFile
 
-/** Matches `func main(…)` / `task main(…)`, with or without leading modifiers. */
-internal val AZORA_ENTRY_POINT = Regex("""(?m)^\s*(?:\w+\s+)*(?:func|task)\s+main\s*\(""")
+/** Matches current `func main`, including `async` / `react` modifiers. */
+internal val AZORA_ENTRY_POINT = Regex(
+    """(?m)^\s*(?:(?:exposed|protected|confined|inline|deepinline|noinline|unsafe|react|async)\s+)*func\s+main\s*\(""",
+)
 
 /** Matches a `test "…" { … }` block. */
 internal val AZORA_TEST_BLOCK = Regex("""(?m)^\s*test\b""")
@@ -80,7 +82,7 @@ class AzoraRunTestProducer : AzoraRunConfigurationProducerBase() {
 
 /**
  * Produces an "interpret" run configuration for a `.az` file with a
- * `func main` or `task main` entry point.
+ * a current `func main` entry point.
  */
 class AzoraRunInterpretProducer : AzoraRunConfigurationProducerBase() {
 

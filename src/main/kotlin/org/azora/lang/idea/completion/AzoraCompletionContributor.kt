@@ -28,6 +28,7 @@ import com.intellij.codeInsight.completion.CompletionParameters
 import com.intellij.codeInsight.completion.CompletionProvider
 import com.intellij.codeInsight.completion.CompletionResultSet
 import com.intellij.codeInsight.completion.CompletionType
+import com.intellij.codeInsight.completion.PlainPrefixMatcher
 import com.intellij.codeInsight.lookup.LookupElementBuilder
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.project.Project
@@ -74,8 +75,10 @@ class AzoraCompletionContributor : CompletionContributor() {
             val prefix = source.substring(lineStart, offset)
             val trimmedPrefix = prefix.trimStart()
 
-            // A decorator is being typed: only decorators can follow the `@`.
-            if (addDecoratorCompletions(prefix, result)) return
+            // `@` introduces either an annotation or a real macro. Both are
+            // completed from symbols visible in this file; the sigil itself is
+            // already present and is never duplicated by insertion.
+            if (addSigilCompletions(project, service, filePath, source, prefix, result)) return
 
             // After `bridge .`, only FFI targets make sense.
             if (BRIDGE_TARGET.containsMatchIn(trimmedPrefix)) {
@@ -89,22 +92,29 @@ class AzoraCompletionContributor : CompletionContributor() {
                 return
             }
 
+            // IntelliJ's default camel-hump matcher treats `Anchor` as a
+            // suffix match for `TilemapAnchor`. Azora names are exact symbols,
+            // so ordinary completion uses a literal prefix and cannot replace
+            // an in-scope `Anchor` with an unrelated longer name.
+            val typedName = wordBefore(source, offset)
+            val scopedResult = if (typedName.isEmpty()) result
+            else result.withPrefixMatcher(PlainPrefixMatcher(typedName, true))
+
             // After `.` or `::`, only the receiver's members make sense.
             val memberContext = memberContext(source, offset)
             if (memberContext != null) {
-                addMemberCompletions(memberContext, resolver, service, filePath, source, offset, project, result)
+                addMemberCompletions(memberContext, resolver, service, filePath, source, offset, project, scopedResult)
                 return
             }
 
             // Named arguments inside `Type(` are that type's fields.
             constructorTarget(prefix)?.let { typeName ->
-                addConstructorArguments(typeName, service, filePath, source, project, result)
+                addConstructorArguments(typeName, service, filePath, source, project, scopedResult)
             }
 
-            addGeneralCompletions(resolver, service, filePath, source, offset, project, result)
-            addKeywordCompletions(source, offset, result)
-            addMacroCompletions(project, source, result)
-            addSnippetCompletions(source, offset, result)
+            addGeneralCompletions(resolver, service, filePath, source, offset, project, scopedResult)
+            addKeywordCompletions(source, offset, scopedResult)
+            addSnippetCompletions(source, offset, scopedResult)
         }
 
         // ── Member completion (`.` and `::`) ───────────────────────────
@@ -208,24 +218,75 @@ class AzoraCompletionContributor : CompletionContributor() {
 
         // ── Decorators ─────────────────────────────────────────────────
 
-        /** Offers decorators when the caret follows an `@`; returns whether it did. */
-        private fun addDecoratorCompletions(prefix: String, result: CompletionResultSet): Boolean {
+        /** Offers annotations and macros after `@`; returns whether it handled the context. */
+        private fun addSigilCompletions(
+            project: Project,
+            service: AzoraSymbolService,
+            filePath: String,
+            source: String,
+            prefix: String,
+            result: CompletionResultSet,
+        ): Boolean {
             val at = prefix.lastIndexOf('@')
             if (at < 0) return false
             val typed = prefix.substring(at + 1)
             if (typed.any { !isNameChar(it) }) return false
 
+            val scoped = if (typed.isEmpty()) result
+            else result.withPrefixMatcher(PlainPrefixMatcher(typed, true))
+            val seen = linkedSetOf<Pair<String, String>>()
+
             for (annotation in AzoraLanguageFacts.builtinAnnotations) {
-                if (!annotation.name.startsWith(typed, ignoreCase = true)) continue
-                result.addElement(
+                if (!annotation.name.startsWith(typed)) continue
+                if (!seen.add("annotation" to annotation.name)) continue
+                scoped.addElement(
                     LookupElementBuilder.create(annotation.insertText.removePrefix("@"))
                         .withPresentableText("@${annotation.name}")
                         .withIcon(AllIcons.Nodes.Annotationtype)
-                        .withTypeText("decorator", true)
+                        .withTypeText("annotation", true)
                         .withTailText("  ${annotation.description}", true)
                 )
             }
+
+            service.getAllVisibleSymbols(project, filePath, source).asSequence()
+                .flatMap(::allSymbols)
+                .filter { it.kind == SymbolKind.ANNOT && it.name.startsWith(typed) }
+                .forEach { annotation ->
+                    if (!seen.add("annotation" to annotation.name)) return@forEach
+                    scoped.addElement(
+                        LookupElementBuilder.create(annotation.name)
+                            .withPresentableText("@${annotation.name}")
+                            .withIcon(AllIcons.Nodes.Annotationtype)
+                            .withTypeText("annotation", true)
+                            .withTailText(annotation.documentation?.firstOrNull()?.let { "  $it" }.orEmpty(), true)
+                    )
+                }
+
+            val macros = runCatching { AzoraMacroIndex.getInstance(project).macrosFor(source) }
+                .getOrDefault(org.azora.lang.idea.symbol.AzoraMacros.EMPTY)
+            macros.all.asSequence().filter { it.startsWith(typed) }.sorted().forEach { name ->
+                if (!seen.add("macro" to name)) return@forEach
+                scoped.addElement(
+                    LookupElementBuilder.create(name)
+                        .withPresentableText("@$name")
+                        .withIcon(AllIcons.Nodes.Tag)
+                        .withTypeText(
+                            when {
+                                name in macros.prefix && name in macros.infix -> "macro"
+                                name in macros.infix -> "infix macro"
+                                else -> "prefix macro"
+                            },
+                            true,
+                        )
+                )
+            }
             return true
+        }
+
+        /** Recursively exposes nested realm symbols to sigil completion. */
+        private fun allSymbols(symbol: SymbolInfo): Sequence<SymbolInfo> = sequence {
+            yield(symbol)
+            for (member in symbol.members) yieldAll(allSymbols(member))
         }
 
         // ── Bridge targets ─────────────────────────────────────────────
@@ -326,30 +387,6 @@ class AzoraCompletionContributor : CompletionContributor() {
             }
         }
 
-        /** Offers the macros this project really declares, prefix form included. */
-        private fun addMacroCompletions(project: Project, source: String, result: CompletionResultSet) {
-            val macros = runCatching {
-                AzoraMacroIndex.getInstance(project).macrosFor(source)
-            }.getOrNull() ?: return
-
-            for (name in macros.prefix) {
-                result.addElement(
-                    LookupElementBuilder.create("$name@[]")
-                        .withPresentableText(name)
-                        .withIcon(AllIcons.Nodes.Tag)
-                        .withTypeText("prefix macro", true)
-                        .withInsertHandler { ctx, _ -> ctx.editor.caretModel.moveToOffset(ctx.tailOffset - 1) }
-                )
-            }
-            for (name in macros.infix) {
-                result.addElement(
-                    LookupElementBuilder.create(name)
-                        .withIcon(AllIcons.Nodes.Tag)
-                        .withTypeText("infix macro", true)
-                )
-            }
-        }
-
         /**
          * Offers multi-line templates, but only when what has been typed is a
          * plausible trigger, so they never crowd out real symbols.
@@ -419,10 +456,10 @@ class AzoraCompletionContributor : CompletionContributor() {
             val QUALIFIER_READER = AzoraResolver(null, AzoraSymbolService())
 
             val TOP_LEVEL_KINDS = setOf(
-                SymbolKind.FUNC, SymbolKind.TASK, SymbolKind.FLOW, SymbolKind.PACK,
-                SymbolKind.ENUM, SymbolKind.FAIL, SymbolKind.SLOT, SymbolKind.SOLO,
-                SymbolKind.SCOPE, SymbolKind.SPEC, SymbolKind.VAR, SymbolKind.FIN,
-                SymbolKind.WRAP, SymbolKind.TYPEALIAS,
+                SymbolKind.FUNC, SymbolKind.BRIDGE_FUNC, SymbolKind.PACK,
+                SymbolKind.ENUM, SymbolKind.FAIL, SymbolKind.SOLO,
+                SymbolKind.SCOPE, SymbolKind.SPEC, SymbolKind.GRAPH,
+                SymbolKind.VAR, SymbolKind.FIN, SymbolKind.TYPEALIAS,
             )
             val VARIANT_OWNERS = setOf(SymbolKind.ENUM, SymbolKind.FAIL, SymbolKind.SLOT)
 
@@ -473,4 +510,7 @@ internal fun iconForSymbolKind(kind: SymbolKind): Icon = when (kind) {
     SymbolKind.CTOR -> AllIcons.Nodes.Method
     SymbolKind.DTOR -> AllIcons.Nodes.Method
     SymbolKind.WRAP_BINDING -> AllIcons.Nodes.Module
+    SymbolKind.ANNOT -> AllIcons.Nodes.Annotationtype
+    SymbolKind.GRAPH -> AllIcons.Nodes.Module
+    SymbolKind.MACRO -> AllIcons.Nodes.Function
 }

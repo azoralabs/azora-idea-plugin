@@ -37,8 +37,8 @@ import com.intellij.psi.util.CachedValuesManager
  * Applies Azora's semantic colors on top of the lexer's: macros, function
  * calls, type references, declaration names and smart casts.
  *
- * The lexer cannot make these calls — it does not know which names a `meta`
- * declaration turned into a macro, nor which names are types — so the work
+ * The lexer cannot make these calls — it does not know which names a `macro`
+ * declaration introduced, nor which names are types — so the work
  * happens here, against the project's real macro and symbol indexes. The whole
  * file is classified once and cached; annotating a token is then a lookup.
  */
@@ -75,6 +75,8 @@ class AzoraSemanticAnnotator : Annotator {
         val types = linkedSetOf<String>()
         val specs = linkedSetOf<String>()
         val functions = linkedSetOf<String>()
+        val decorators = linkedSetOf<String>()
+        val properties = linkedSetOf<String>()
 
         fun visit(symbol: SymbolInfo) {
             when (symbol.kind) {
@@ -85,7 +87,11 @@ class AzoraSemanticAnnotator : Annotator {
                 SymbolKind.SLOT,
                 SymbolKind.SOLO,
                 SymbolKind.WRAP,
-                SymbolKind.TYPEALIAS -> types.add(symbol.name)
+                SymbolKind.TYPEALIAS,
+                SymbolKind.GRAPH -> types.add(symbol.name)
+                SymbolKind.ANNOT -> decorators.add(symbol.name)
+                SymbolKind.PROPERTY,
+                SymbolKind.FIELD -> properties.add(symbol.name)
                 SymbolKind.FUNC,
                 SymbolKind.METHOD,
                 SymbolKind.BRIDGE_FUNC,
@@ -102,7 +108,13 @@ class AzoraSemanticAnnotator : Annotator {
         }
 
         symbols.forEach(::visit)
-        return AzoraSemanticSymbols(types, specs, functions)
+        return AzoraSemanticSymbols(
+            types = types,
+            specTypes = specs,
+            functions = functions,
+            decorators = decorators,
+            properties = properties,
+        )
     }
 
     /** Flattens the file's leaf tokens into the form the model works on. */

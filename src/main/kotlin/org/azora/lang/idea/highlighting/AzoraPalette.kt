@@ -53,11 +53,8 @@ object AzoraPalette {
     /** Types, packs, specs, enums, zones — pastel teal. */
     val TYPE = pair(0x2F6F68, 0x5FA89F)
 
-    /** Functions, tasks and flows — pastel yellow. */
-    val FUNCTION = pair(0x8A6A0A, 0xE6C96B)
-
-    /** Decorators and decorator declarations — pastel orange. */
-    val DECORATOR = pair(0xA65310, 0xE8944A)
+    /** Decorators and decorator declarations — pastel yellow. */
+    val DECORATOR = pair(0x8A6A0A, 0xE6C96B)
 
     /** Strings and char literals — pastel green. */
     val STRING = pair(0x3C7C4C, 0x7DBF8A)
@@ -71,11 +68,17 @@ object AzoraPalette {
     /** Ordinary identifiers, numbers, operators and punctuation. */
     val FOREGROUND = pair(0x262626, 0xD9DADA)
 
+    /** Functions use the ordinary foreground; callability comes from context, not hue. */
+    val FUNCTION = FOREGROUND
+
     /** Unused declarations and parameters. */
     val UNUSED = pair(0x6D6D6D, 0xB8B8B8)
 
-    /** Generic type parameters. */
-    val TYPE_PARAMETER = pair(0x356A9A, 0x5BA3D0)
+    /** Generic type parameters — pastel orange. */
+    val TYPE_PARAMETER = pair(0xA65310, 0xE8944A)
+
+    /** Loop labels and their jump targets — blue. */
+    val LABEL = pair(0x2A6FC4, 0x4E93EA)
 
     /** Invalid / unrecognized input. */
     val INVALID = pair(0xC1121F, 0xE63946)

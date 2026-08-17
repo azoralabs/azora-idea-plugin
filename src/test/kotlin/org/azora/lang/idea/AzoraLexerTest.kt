@@ -50,7 +50,10 @@ class AzoraLexerTest {
 
     @Test
     fun `declaration keywords are classified correctly`() {
-        val keywords = listOf("func", "pack", "enum", "slot", "impl", "zone", "var", "fin", "spec")
+        val keywords = listOf(
+            "func", "pack", "enum", "variant", "error", "impl", "realm", "scope",
+            "var", "val", "let", "fin", "spec", "annot", "graph", "macro",
+        )
         for (kw in keywords) {
             val tokens = tokenizeFiltered(kw)
             assertEquals(1, tokens.size, "Expected 1 token for '$kw'")
@@ -59,10 +62,10 @@ class AzoraLexerTest {
     }
 
     @Test
-    fun `scope is a current memory keyword`() {
+    fun `scope is a current declaration keyword`() {
         val tokens = tokenizeFiltered("scope")
         assertEquals(1, tokens.size)
-        assertEquals(AzoraTokenTypes.MEMORY_KEYWORD, tokens[0].first)
+        assertEquals(AzoraTokenTypes.DECLARATION_KEYWORD, tokens[0].first)
     }
 
     @Test
@@ -77,6 +80,7 @@ class AzoraLexerTest {
             "take" to AzoraTokenTypes.MEMORY_KEYWORD,
             "remember" to AzoraTokenTypes.REACTIVE_KEYWORD,
             "react" to AzoraTokenTypes.MODIFIER_KEYWORD,
+            "without" to AzoraTokenTypes.CONTROL_KEYWORD,
         )
         for ((word, type) in expected) {
             assertEquals(type, tokenizeFiltered(word).single().first, "wrong token for $word")
@@ -88,8 +92,8 @@ class AzoraLexerTest {
         assertEquals(AzoraTokenTypes.IDENTIFIER, tokenizeFiltered("func module(): Unit {}").first { it.second == "module" }.first)
         assertEquals(AzoraTokenTypes.DECLARATION_KEYWORD, tokenizeFiltered("module demo.core").first { it.second == "module" }.first)
         assertEquals(AzoraTokenTypes.IDENTIFIER, tokenizeFiltered("value.union(other)").first { it.second == "union" }.first)
-        assertEquals(AzoraTokenTypes.DECLARATION_KEYWORD, tokenizeFiltered("union Result {}").first { it.second == "union" }.first)
-        assertEquals(AzoraTokenTypes.DECLARATION_KEYWORD, tokenizeFiltered("mod std.math").first { it.second == "mod" }.first)
+        assertEquals(AzoraTokenTypes.DECLARATION_KEYWORD, tokenizeFiltered("unsafe union Result {}").first { it.second == "union" }.first)
+        assertEquals(AzoraTokenTypes.IDENTIFIER, tokenizeFiltered("mod std.math").first { it.second == "mod" }.first)
     }
 
     @Test
@@ -104,7 +108,10 @@ class AzoraLexerTest {
 
     @Test
     fun `modifier keywords are classified correctly`() {
-        val keywords = listOf("expose", "confine", "protect", "inline")
+        val keywords = listOf(
+            "exposed", "confined", "protected", "inline", "deepinline", "noinline",
+            "threadlocal", "react", "bridge", "solo", "factory", "lazy", "derive", "out",
+        )
         for (kw in keywords) {
             val tokens = tokenizeFiltered(kw)
             assertEquals(1, tokens.size, "Expected 1 token for '$kw'")
@@ -114,7 +121,7 @@ class AzoraLexerTest {
 
     @Test
     fun `memory keywords are classified correctly`() {
-        val keywords = listOf("alloc", "drop", "unsafe", "deref")
+        val keywords = listOf("alloc", "purge", "unsafe", "take", "inject", "preserve")
         for (kw in keywords) {
             val tokens = tokenizeFiltered(kw)
             assertEquals(1, tokens.size, "Expected 1 token for '$kw'")
@@ -127,7 +134,7 @@ class AzoraLexerTest {
         val functionName = tokenizeFiltered("func get(): String {}").first { it.second == "get" }
         assertEquals(AzoraTokenTypes.IDENTIFIER, functionName.first)
 
-        val propertyName = tokenizeFiltered("""spec Into<T>: T { ref self } use as "to${'$'}{T.typeName}"""").first { it.second == "use" }
+        val propertyName = tokenizeFiltered("""spec Into<T> { func into[self: Self&](): T } use std.convert""").first { it.second == "use" }
         assertEquals(AzoraTokenTypes.DECLARATION_KEYWORD, propertyName.first)
 
         val setterName = tokenizeFiltered("func set(value: Int) {}").first { it.second == "set" }
@@ -136,7 +143,7 @@ class AzoraLexerTest {
 
     @Test
     fun `reactive keywords are classified correctly`() {
-        val keywords = listOf("mem", "rem", "ret", "effect")
+        val keywords = listOf("remember", "retain", "effect")
         for (kw in keywords) {
             val tokens = tokenizeFiltered(kw)
             assertEquals(1, tokens.size, "Expected 1 token for '$kw'")
@@ -154,7 +161,7 @@ class AzoraLexerTest {
 
     @Test
     fun `where is a keyword only in declaration constraints`() {
-        val constrainedPack = tokenizeFiltered("pack<T> Box where T is Value")
+        val constrainedPack = tokenizeFiltered("pack Box<T> where T: Value")
         assertEquals(
             AzoraTokenTypes.CONTROL_KEYWORD,
             constrainedPack.first { it.second == "where" }.first,
@@ -162,7 +169,7 @@ class AzoraLexerTest {
 
         val constrainedFunction = tokenizeFiltered(
             """
-                func<T> select(
+                func select<T>(
                     value: T
                 ): T where T is Value { return value }
             """.trimIndent(),
@@ -174,9 +181,9 @@ class AzoraLexerTest {
 
         for (source in listOf(
             "func where(): Unit {}",
-            "func<T> where(value: T): T { return value }",
+            "func where<T>(value: T): T { return value }",
             "func accepts(where: Int): Int { return where }",
-            "pack<T> where",
+            "pack where<T>",
             "fin where = 1",
         )) {
             assertTrue(
@@ -184,6 +191,63 @@ class AzoraLexerTest {
                     .filter { it.second == "where" }
                     .all { it.first == AzoraTokenTypes.IDENTIFIER },
                 "`where` must remain an identifier in: $source",
+            )
+        }
+    }
+
+    @Test
+    fun `assoc is contextual in spec and impl headers`() {
+        assertTrue("assoc" in AzoraLanguageFacts.allCompletionKeywords)
+        assertTrue("without" in AzoraLanguageFacts.allCompletionKeywords)
+
+        for (source in listOf(
+            "spec Iterator assoc Item {}",
+            "spec Matrix assoc [Scalar Rows] {}",
+            "impl Iterator for Rows assoc Item = Entity {}",
+            "impl Matrix<T> for Grid<T> assoc [Scalar = T Rows = Int] {}",
+        )) {
+            assertEquals(
+                AzoraTokenTypes.CONTROL_KEYWORD,
+                tokenizeFiltered(source).single { it.second == "assoc" }.first,
+                "`assoc` must be a keyword in: $source",
+            )
+        }
+
+        for (source in listOf(
+            "func assoc(): Unit {}",
+            "fin assoc = 1",
+            "func read(assoc: Int): Int { return assoc }",
+            "value.assoc(other)",
+            "spec assoc {}",
+            "impl Iterator for assoc {}",
+        )) {
+            assertTrue(
+                tokenizeFiltered(source)
+                    .filter { it.second == "assoc" }
+                    .all { it.first == AzoraTokenTypes.IDENTIFIER },
+                "`assoc` must remain an identifier in: $source",
+            )
+        }
+    }
+
+    @Test
+    fun `derives is a contextual keyword in pack headers`() {
+        assertTrue("derives" in AzoraLanguageFacts.allCompletionKeywords)
+        assertEquals(
+            AzoraTokenTypes.CONTROL_KEYWORD,
+            tokenizeFiltered("pack Player<T> derives [Copy, Hash] where T: Copy")
+                .single { it.second == "derives" }.first,
+        )
+        for (source in listOf(
+            "func derives(): Unit {}",
+            "fin derives = 1",
+            "value.derives(other)",
+            "unsafe union Result derives [Copy] {}",
+        )) {
+            assertTrue(
+                tokenizeFiltered(source).filter { it.second == "derives" }
+                    .all { it.first == AzoraTokenTypes.IDENTIFIER },
+                "`derives` must remain an identifier in: $source",
             )
         }
     }
@@ -217,19 +281,18 @@ class AzoraLexerTest {
 
     @Test
     fun `real literals are tokenized`() {
-        val tokens = tokenizeFiltered("3.14 1e-5 2.0f64")
-        assertEquals(3, tokens.size)
+        val tokens = tokenizeFiltered("3.14 1e-5 2.0f 3.0D")
+        assertEquals(4, tokens.size)
         assertTrue(tokens.all { it.first == AzoraTokenTypes.REAL_LITERAL })
     }
 
     @Test
     fun `type-suffixed integers are tokenized`() {
-        val tokens = tokenizeFiltered("42i32 100u64")
-        assertEquals(2, tokens.size)
-        assertEquals(AzoraTokenTypes.INT_LITERAL, tokens[0].first)
-        assertEquals("42i32", tokens[0].second)
-        assertEquals(AzoraTokenTypes.INT_LITERAL, tokens[1].first)
-        assertEquals("100u64", tokens[1].second)
+        val spellings = listOf("42b", "200ub", "42s", "60000us", "42u", "42L", "42uL", "42c", "42uc")
+        val tokens = tokenizeFiltered(spellings.joinToString(" "))
+        assertEquals(spellings.size, tokens.size)
+        assertTrue(tokens.all { it.first == AzoraTokenTypes.INT_LITERAL })
+        assertEquals(spellings, tokens.map { it.second })
     }
 
     // ── String and char literals ───────────────────────────────────────
@@ -358,18 +421,20 @@ class AzoraLexerTest {
 
     @Test
     fun `decorators are tokenized`() {
-        val tokens = tokenizeFiltered("@entry @test")
-        assertEquals(2, tokens.size)
-        assertTrue(tokens.all { it.first == AzoraTokenTypes.DECORATOR })
-        assertEquals("@entry", tokens[0].second)
-        assertEquals("@test", tokens[1].second)
+        val tokens = tokenizeFiltered("@Stable @query")
+        assertEquals(4, tokens.size)
+        assertEquals(listOf("@", "Stable", "@", "query"), tokens.map { it.second })
+        assertEquals(AzoraTokenTypes.DECORATOR, tokens[0].first)
+        assertEquals(AzoraTokenTypes.IDENTIFIER, tokens[1].first)
+        assertEquals(AzoraTokenTypes.DECORATOR, tokens[2].first)
+        assertEquals(AzoraTokenTypes.IDENTIFIER, tokens[3].first)
     }
 
     // ── Type parameters ────────────────────────────────────────────────
 
     @Test
     fun `type parameters in generic func are reclassified`() {
-        val tokens = tokenizeFiltered("func<T> printAll(items: T)")
+        val tokens = tokenizeFiltered("func printAll<T>(items: T)")
         val typeParamTokens = tokens.filter { it.first == AzoraTokenTypes.TYPE_PARAMETER }
         assertTrue(typeParamTokens.isNotEmpty(), "Expected TYPE_PARAMETER tokens")
         assertTrue(typeParamTokens.all { it.second == "T" })

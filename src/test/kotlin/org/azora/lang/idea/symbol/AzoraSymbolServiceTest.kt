@@ -55,7 +55,7 @@ class AzoraSymbolServiceTest {
 
     @Test
     fun `extracts exposed function`() {
-        val symbols = service.getSymbolsForFile("test.az", "expose func helper(): String {}")
+        val symbols = service.getSymbolsForFile("test.az", "exposed func helper(): String {}")
         val func = symbols.find { it.name == "helper" }
         assertNotNull(func)
         assertTrue(func!!.isExposed)
@@ -86,7 +86,10 @@ class AzoraSymbolServiceTest {
     fun `extracts enum with variants`() {
         val source = """
             enum Direction {
-                North, South, East, West
+                North
+                South
+                East
+                West
             }
         """.trimIndent()
         val symbols = service.getSymbolsForFile("test.az", source)
@@ -98,34 +101,35 @@ class AzoraSymbolServiceTest {
         assertEquals("North", enum.members[0].name)
     }
 
-    // ── Slot declarations ──────────────────────────────────────────────
+    // ── Payload enum declarations ──────────────────────────────────────
 
     @Test
-    fun `extracts slot with parameterized variants`() {
+    fun `extracts variant enum with parameterized variants`() {
         val source = """
-            slot Shape {
-                Circle(radius: Real),
+            variant enum Shape {
+                Circle(radius: Real)
                 Rectangle(width: Real, height: Real)
             }
         """.trimIndent()
         val symbols = service.getSymbolsForFile("test.az", source)
-        val slot = symbols.find { it.name == "Shape" }
-        assertNotNull(slot)
-        assertEquals(SymbolKind.SLOT, slot!!.kind)
-        assertEquals(2, slot.members.size)
-        val circle = slot.members[0]
+        val shape = symbols.find { it.name == "Shape" }
+        assertNotNull(shape)
+        assertEquals(SymbolKind.ENUM, shape!!.kind)
+        assertEquals(2, shape.members.size)
+        val circle = shape.members[0]
         assertEquals("Circle", circle.name)
         assertEquals(1, circle.params.size)
         assertEquals("radius", circle.params[0].first)
+        assertEquals(2, shape.members[1].params.size)
     }
 
-    // ── Fail declarations ──────────────────────────────────────────────
+    // ── Error declarations ─────────────────────────────────────────────
 
     @Test
-    fun `extracts fail with variants`() {
+    fun `extracts error with variants`() {
         val source = """
-            fail NetworkError {
-                Timeout,
+            error NetworkError {
+                Timeout
                 NotFound
             }
         """.trimIndent()
@@ -136,34 +140,34 @@ class AzoraSymbolServiceTest {
         assertEquals(2, fail.members.size)
     }
 
-    // ── Zone declarations ──────────────────────────────────────────────
+    // ── Realm declarations ─────────────────────────────────────────────
 
     @Test
-    fun `extracts zone with nested symbols`() {
+    fun `extracts realm with nested symbols`() {
         val source = """
-            zone MathUtils {
+            realm MathUtils {
                 func square(n: Int): Int {}
             }
         """.trimIndent()
         val symbols = service.getSymbolsForFile("test.az", source)
-        val zone = symbols.find { it.name == "MathUtils" }
-        assertNotNull(zone)
-        assertEquals(SymbolKind.SCOPE, zone!!.kind)
-        assertTrue(zone.members.any { it.name == "square" })
+        val realm = symbols.find { it.name == "MathUtils" }
+        assertNotNull(realm)
+        assertEquals(SymbolKind.SCOPE, realm!!.kind)
+        assertTrue(realm.members.any { it.name == "square" })
     }
 
     @Test
-    fun `extracts friend zone path`() {
+    fun `extracts qualified realm path`() {
         val source = """
-            friend zone std::math {
+            realm std::math {
                 func abs(x: Int): Int {}
             }
         """.trimIndent()
         val symbols = service.getSymbolsForFile("test.az", source)
-        val zone = symbols.find { it.name == "std::math" }
-        assertNotNull(zone)
-        assertEquals(SymbolKind.SCOPE, zone!!.kind)
-        assertTrue(zone.members.any { it.name == "abs" })
+        val realm = symbols.find { it.name == "std::math" }
+        assertNotNull(realm)
+        assertEquals(SymbolKind.SCOPE, realm!!.kind)
+        assertTrue(realm.members.any { it.name == "abs" })
     }
 
     @Test
@@ -180,8 +184,8 @@ class AzoraSymbolServiceTest {
     }
 
     @Test
-    fun `recognizes legacy and current module declarations`() {
-        assertEquals("std.math", service.moduleOfFile("mod std.math\n"))
+    fun `recognizes current module declarations only`() {
+        assertNull(service.moduleOfFile("mod std.math\n"))
         assertEquals("std.math", service.moduleOfFile("module std.math\n"))
     }
 
@@ -216,32 +220,29 @@ class AzoraSymbolServiceTest {
         assertEquals("Point", point!!.type)
     }
 
-    // ── Task/Flow declarations ─────────────────────────────────────────
+    // ── Async and reactive declarations ────────────────────────────────
 
     @Test
-    fun `extracts task declaration`() {
-        val symbols = service.getSymbolsForFile("test.az", "task fetchData(url: String): String {}")
-        val task = symbols.find { it.name == "fetchData" }
-        assertNotNull(task)
-        assertEquals(SymbolKind.TASK, task!!.kind)
+    fun `extracts async function declaration`() {
+        val symbols = service.getSymbolsForFile("test.az", "async func fetchData(url: String): String {}")
+        val function = symbols.find { it.name == "fetchData" }
+        assertNotNull(function)
+        assertEquals(SymbolKind.FUNC, function!!.kind)
     }
 
     @Test
-    fun `extracts flow declaration`() {
-        val symbols = service.getSymbolsForFile("test.az", "flow fibonacci(): Int {}")
-        val flow = symbols.find { it.name == "fibonacci" }
-        assertNotNull(flow)
-        assertEquals(SymbolKind.FLOW, flow!!.kind)
+    fun `extracts react async function declaration`() {
+        val symbols = service.getSymbolsForFile("test.az", "react async func observe(): Int {}")
+        val function = symbols.find { it.name == "observe" }
+        assertNotNull(function)
+        assertEquals(SymbolKind.FUNC, function!!.kind)
     }
 
-    // ── Package and use ────────────────────────────────────────────────
+    // ── Module and import/use ──────────────────────────────────────────
 
     @Test
-    fun `extracts package declaration`() {
-        val symbols = service.getSymbolsForFile("test.az", "package example.app")
-        val pkg = symbols.find { it.kind == SymbolKind.PACKAGE }
-        assertNotNull(pkg)
-        assertEquals("example.app", pkg!!.name)
+    fun `module header is available as file metadata`() {
+        assertEquals("example.app", service.moduleOfFile("exposed module example.app"))
     }
 
     @Test
@@ -283,7 +284,7 @@ class AzoraSymbolServiceTest {
             pack List<T>
 
             impl Into<String> for List<T> {
-                func render(): String { ref self -> return "" }
+                func render[self: Self&](): String { return "" }
             }
         """.trimIndent()
         val members = service.getMembersForType("List", "test.az", source)
@@ -294,13 +295,13 @@ class AzoraSymbolServiceTest {
     fun `indexes external operator implementation under target type`() {
         val source = """
             pack Set<T>
-            impl oper[] for Set<T> { ref self, index -> }
+            impl oper[] for Set<T> { self&, index -> }
         """.trimIndent()
         val members = service.getMembersForType("Set", "test.az", source)
         assertTrue(members.any { it.kind == SymbolKind.OPERATOR && it.name == "oper[]" })
     }
 
-    // ── Stdlib zones ──────────────────────────────────────────────────
+    // ── Stdlib realms ─────────────────────────────────────────────────
 
     @Test
     fun `resolves std module path members`() {
@@ -322,20 +323,16 @@ class AzoraSymbolServiceTest {
     @Test
     fun `infix operator names come from declarations, never from a builtin list`() {
         val source = """
-            meta .Infix("combine") {
-                ${'$'}a ${'$'}b => c(${'$'}a, ${'$'}b)
-            }
-            meta .Infix("to!") {
-                ${'$'}a ${'$'}b => e(${'$'}a, ${'$'}b)
-            }
+            macro ${'$'}a @combine ${'$'}b => c(${'$'}a, ${'$'}b)
+            macro ${'$'}a @to ${'$'}b => e(${'$'}a, ${'$'}b)
         """.trimIndent()
         val names = service.infixOperatorNames("infix.az", source)
 
         assertTrue(names.contains("combine"), "user-declared 'combine' should be recognized")
-        assertTrue(names.contains("to"), "mutable-suffixed name should strip the trailing '!'")
+        assertTrue(names.contains("to"), "current infix macro should be recognized")
 
         // `with`, `by` and `reverse` are language keywords. They are operators
-        // only where some `meta` declaration makes them one, so nothing may
+        // only where some `macro` declaration makes them one, so nothing may
         // seed them here — that is what lets them stay keyword-colored in a
         // project that does not declare them.
         assertFalse(names.contains("with"), "'with' must not be assumed to be a macro")
@@ -353,11 +350,12 @@ class AzoraSymbolServiceTest {
         val symbols1 = service.getSymbolsForFile("cached.az", source1)
         assertTrue(symbols1.any { it.name == "first" })
 
-        // Second call with different content returns cached result
+        // A changed document must invalidate by content hash immediately; stale
+        // cache entries break hover and goto while a file is being edited.
         val symbols2 = service.getSymbolsForFile("cached.az", source2)
-        assertTrue(symbols2.any { it.name == "first" }, "Expected cached result")
+        assertTrue(symbols2.any { it.name == "second" }, "Expected fresh symbols")
 
-        // After invalidate, new content is used
+        // Explicit invalidation remains supported as well.
         service.invalidate("cached.az")
         val symbols3 = service.getSymbolsForFile("cached.az", source2)
         assertTrue(symbols3.any { it.name == "second" }, "Expected fresh extraction")

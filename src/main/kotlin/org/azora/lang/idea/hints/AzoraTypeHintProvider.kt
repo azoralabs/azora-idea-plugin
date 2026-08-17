@@ -132,7 +132,7 @@ private class AzoraTypeHintCollector : SharedBypassCollector {
     }
 
     private companion object {
-        val BINDING_KEYWORDS = setOf("var", "fin", "let", "mem", "rem", "ret")
+        val BINDING_KEYWORDS = setOf("var", "fin", "let", "val")
         val KEYWORD_TYPES = setOf(
             AzoraTokenTypes.DECLARATION_KEYWORD,
             AzoraTokenTypes.REACTIVE_KEYWORD,

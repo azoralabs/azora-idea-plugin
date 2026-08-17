@@ -68,8 +68,9 @@ class AzoraColorSettingsPage : ColorSettingsPage {
             AttributesDescriptor("Identifiers//Type declaration", AzoraSyntaxHighlighter.TYPE_DECLARATION),
             AttributesDescriptor("Identifiers//Spec type", AzoraSyntaxHighlighter.SPEC_TYPE),
             AttributesDescriptor("Identifiers//Type parameter", AzoraSyntaxHighlighter.TYPE_PARAMETER),
-            AttributesDescriptor("Identifiers//Zone usage", AzoraSyntaxHighlighter.ZONE_USAGE),
+            AttributesDescriptor("Identifiers//Realm path", AzoraSyntaxHighlighter.ZONE_USAGE),
             AttributesDescriptor("Identifiers//Import path", AzoraSyntaxHighlighter.MODULE_PATH),
+            AttributesDescriptor("Identifiers//Loop label", AzoraSyntaxHighlighter.LOOP_LABEL),
             AttributesDescriptor("Identifiers//Function call", AzoraSyntaxHighlighter.FUNCTION_CALL),
             AttributesDescriptor("Identifiers//Function declaration", AzoraSyntaxHighlighter.FUNCTION_DECLARATION),
             AttributesDescriptor("Identifiers//Spec function", AzoraSyntaxHighlighter.SPEC_FUNCTION),
@@ -122,10 +123,12 @@ class AzoraColorSettingsPage : ColorSettingsPage {
         private val TAGS = mapOf(
             "macro" to AzoraSyntaxHighlighter.MACRO,
             "type" to AzoraSyntaxHighlighter.TYPE_NAME,
+            "typeParam" to AzoraSyntaxHighlighter.TYPE_PARAMETER,
             "typeDecl" to AzoraSyntaxHighlighter.TYPE_DECLARATION,
             "specType" to AzoraSyntaxHighlighter.SPEC_TYPE,
             "zoneUsage" to AzoraSyntaxHighlighter.ZONE_USAGE,
             "modulePath" to AzoraSyntaxHighlighter.MODULE_PATH,
+            "label" to AzoraSyntaxHighlighter.LOOP_LABEL,
             "call" to AzoraSyntaxHighlighter.FUNCTION_CALL,
             "funcDecl" to AzoraSyntaxHighlighter.FUNCTION_DECLARATION,
             "specFunc" to AzoraSyntaxHighlighter.SPEC_FUNCTION,
@@ -146,124 +149,76 @@ class AzoraColorSettingsPage : ColorSettingsPage {
         private const val RAW = "\"\"\""
 
         private val DEMO_TEXT = """
-            module <typeDecl>example</typeDecl>.app
+            module <modulePath>example</modulePath>.<modulePath>app</modulePath>
 
-            import <modulePath>std</modulePath>.{<modulePath>math</modulePath>, <modulePath>container</modulePath>}
-            import <modulePath>std</modulePath>.<modulePath>io</modulePath>
+            import <modulePath>std</modulePath>.<modulePath>math</modulePath>
+            import <modulePath>std</modulePath>.<modulePath>reflection</modulePath>
 
-            /**
-             * A point in two dimensions.
-             * @param x the horizontal coordinate.
-             */
-            @Stable(sinceAzora: "0.0.5")
+            /** A point in two dimensions. */
+            @Stable(since: "0.1")
             pack <typeDecl>Point</typeDecl> {
-                var <field>x</field>: <type>Real</type> = 0.0
-                var <field>y</field>: <type>Real</type> = 0.0
+                var <field>x</field>: <type>std::Double</type> = 0.0
+                var <field>y</field>: <type>std::Double</type> = 0.0
             }
 
+            annot <typeDecl>Serializable</typeDecl>
+
+            variant enum <typeDecl>Shape</typeDecl> {
+                Circle(radius: <type>std::Double</type>)
+                Rectangle(width: <type>std::Double</type> height: <type>std::Double</type>)
+            }
+
+            error <typeDecl>NetworkError</typeDecl> {
+                Timeout
+                NotFound
+            }
+
+            macro @buildPoint {
+                [${'$'}x ${'$'}y] => Point(${ '$' }x ${ '$' }y)
+            }
+            macro ${'$'}left @to ${'$'}right => pair(${ '$' }left ${ '$' }right)
+
             impl <type>Point</type> {
-                ctor(<param>x</param>: <type>Real</type>, <param>y</param>: <type>Real</type>) {
+                react ctor[<param>self</param>: Self!](
+                    <param>x</param>: <type>std::Double</type>
+                    <param>y</param>: <type>std::Double</type>
+                ) {
                     <param>self</param>.<field>x</field> = <param>x</param>
                     <param>self</param>.<field>y</field> = <param>y</param>
                 }
 
-                /// The squared distance to another point.
-                func <funcDecl>distanceTo</funcDecl>(<param>other</param>: <type>Point</type>): <type>Real</type> {
+                func <funcDecl>distanceTo</funcDecl>[<param>self</param>: Self&](
+                    <param>other</param>: <type>Point</type>
+                ): <type>std::Double</type> {
                     fin dx = <param>other</param>.<field>x</field> - <param>self</param>.<field>x</field>
                     return dx * dx
                 }
+            }
 
-                oper+(<param>other</param>: <type>Point</type>): <type>Point</type> {
-                    return <type>Point</type>(x: <param>self</param>.<field>x</field> + <param>other</param>.<field>x</field>, y: 0.0)
+            realm <zoneUsage>ide</zoneUsage>::<zoneUsage>editor</zoneUsage> {
+                react func <funcDecl>render</funcDecl><<typeParam>T</typeParam>>(
+                    <param>value</param>: <typeParam>T</typeParam>
+                ) {
+                    fin built = <macro>@buildPoint</macro>[1.0 2.0]
+                    fin pair = built <macro>@to</macro> <param>value</param>
+                    <call>std::println</call>(pair)
                 }
             }
 
-            enum <typeDecl>Direction</typeDecl> { North, South, East, West }
-
-            slot <typeDecl>Shape</typeDecl> {
-                Circle(radius: <type>Real</type>),
-                Rectangle(width: <type>Real</type>, height: <type>Real</type>)
-            }
-
-            fail <typeDecl>NetworkError</typeDecl> { Timeout, NotFound }
-
-            // Macros are found in real `meta` declarations, never hardcoded.
-            meta .Prefix("vec") { [...${'$'}items] => }
-            meta .Infix("to") { ${'$'}a ${'$'}b => }
-            meta type {
-                res ${'$'}T => ref ${'$'}T
-                ${'$'}Base with ${'$'}Filter => ${'$'}Base
-            }
-
-            func <funcDecl>macros</funcDecl>() {
-                // `with` is a keyword in statement position…
-                with (context) {
-                    fin numbers = <macro>vec</macro>@[1, 2, 3]
-                    fin pairs = "a" <macro>to</macro> 1
+            func <funcDecl>search</funcDecl>(<param>items</param>: <type>Array&lt;std::Int&gt;</type>) {
+                <label>outer</label>: for item in <param>items</param> {
+                    if item == 0 { break:<label>outer</label> }
                 }
-                // …and the macro the engine declared when it joins two types.
-                fin query: Query<<type>Position</type> <macro>with</macro> <type>Velocity</type>> = <call>makeQuery</call>()
-            }
-
-            func <funcDecl>strings</funcDecl>(<param>name</param>: <type>String</type>): <type>String</type> {
-                fin greeting = "Hello, ${'$'}<param>name</param>!\n"
-                fin detail = "total: ${'$'}{<call>count</call>() + 1}"
-                fin raw = ${RAW}no ${'$'}escapes here${RAW}
-                return greeting + detail + raw
-            }
-
-            func <funcDecl>describe</funcDecl>(<param>shape</param>: <type>Shape</type>): <type>String</type> {
-                if <param>shape</param> is <type>Circle</type> {
-                    // Inside the branch the binding is narrowed.
-                    return "circle " + <call>toString</call>(<smartCast>shape</smartCast>.<field>radius</field>)
-                }
-                guard <param>shape</param> is <type>Rectangle</type> else { return "unknown" }
-                return <call>toString</call>(<smartCast>shape</smartCast>.<field>width</field>)
-            }
-
-            expose task <funcDecl>fetch</funcDecl>(<param>url</param>: <type>String</type>): <type>String</type> {
-                fin response = await <call>httpGet</call>(<param>url</param>)
-                defer { <call>close</call>(response) }
-                return response
-            }
-
-            flow <funcDecl>fibonacci</funcDecl>(): <type>Int</type> {
-                var a = 0
-                loop {
-                    yield a
-                    a = a + 1
-                }
-            }
-
-            solo <typeDecl>AppConfig</typeDecl> {
-                fin <field>apiUrl</field>: <type>String</type> = "https://api.example.com"
-            }
-
-            wrap <typeDecl>ServiceModule</typeDecl> {
-                bind <type>ApiService</type> = <type>ApiServiceImpl</type>()
-            }
-
-            func <funcDecl>lowLevel</funcDecl>() {
-                zone scratch {
-                    fin buffer = alloc <type>Byte</type>(1024)
-                    unsafe { buffer[0] = 0xFF as <type>Byte</type> }
-                    drop buffer
-                }
-            }
-
-            func <funcDecl>diagnostics</funcDecl>() {
-                fin broken = <error>"unterminated</error>
-                import <warning>std.doesNotExist</warning>
-            }
-
-            test "points add componentwise" {
-                fin a = <type>Point</type>(x: 1.0, y: 2.0)
-                assert (a + a).<field>x</field> == 2.0 { "x doubles" }
             }
 
             func <funcDecl>main</funcDecl>() {
-                <call>println</call>(<call>describe</call>(<type>Shape</type>.Circle(radius: 5.0)))
+                fin <unused>unusedValue</unused> = 1
+                <call>ide::editor::render</call>(Shape.Circle(5.0))
             }
+
+            // Exact diagnostics use wavy underlines.
+            fin bad: std::Double = <error>5</error>
+            import <warning>std.doesNotExist</warning>
         """.trimIndent()
     }
 }

@@ -49,6 +49,24 @@ class AzoraResolverTest {
     }
 
     @Test
+    fun `short string interpolation resolves the referenced local symbol`() {
+        val source = """
+            func greet() {
+                fin name = "Azora"
+                println("Hello, ${'$'}name")
+            }
+        """.trimIndent()
+        val use = source.lastIndexOf("name")
+
+        val reference = resolver.referenceAt(source, use)!!
+        val resolved = resolver.resolve("/greet.az", source, use)
+
+        assertEquals("name", reference.name)
+        assertEquals(SymbolKind.FIN, resolved.single().kind)
+        assertEquals(source.indexOf("name ="), resolved.single().offset)
+    }
+
+    @Test
     fun `reads a dotted receiver chain`() {
         val source = "fin port = config.server.port"
         val reference = resolver.referenceAt(source, offsetOf(source, "port", occurrence = 1))!!
@@ -102,7 +120,10 @@ class AzoraResolverTest {
     @Test
     fun `parameters of the enclosing function are in scope`() {
         val source = """
-            func greet(name: String, times: Int): String {
+            func greet(
+                name: String
+                times: Int
+            ): String {
                 return name
             }
         """.trimIndent()
@@ -112,6 +133,39 @@ class AzoraResolverTest {
 
         assertEquals(SymbolKind.PARAM, parameter.kind)
         assertEquals("String", parameter.type)
+    }
+
+    @Test
+    fun `contextual receiver parameters resolve by their declaration`() {
+        val source = """
+            pack Anchor {
+                var pass: Composition!
+                var parent: Entity
+            }
+
+            impl Text {
+                react ctor[self: Self&, anchor: Anchor&](
+                    value: std::String
+                    modifier: Modifier! = .()
+                    key: std::String = ""
+                ): Entity {
+                    fin id = anchor @applyKey key
+                    return anchor.pass.text(anchor.parent, id, modifier, value)
+                }
+            }
+        """.trimIndent()
+        val use = source.indexOf("anchor @applyKey")
+
+        val resolved = resolver.resolve("/text.az", source, use)
+
+        assertEquals(SymbolKind.PARAM, resolved.single().kind)
+        assertEquals("Anchor&", resolved.single().type)
+        assertEquals(source.indexOf("anchor: Anchor&"), resolved.single().offset)
+        assertEquals(
+            setOf("pass", "parent"),
+            resolver.membersOfQualifier(listOf("anchor"), "/text.az", source, use)
+                .map { it.name }.toSet(),
+        )
     }
 
     @Test
@@ -151,7 +205,7 @@ class AzoraResolverTest {
             }
         """.trimIndent()
 
-        val locals = resolver.localsInScope(source, source.length)
+        val locals = resolver.localsInScope(source, source.lastIndexOf('}'))
         assertEquals("Point", locals.first { it.name == "origin" }.type)
         assertEquals("String", locals.first { it.name == "label" }.type)
         assertEquals("Int", locals.first { it.name == "count" }.type)
@@ -210,7 +264,9 @@ class AzoraResolverTest {
             }
         """.trimIndent()
 
-        val members = resolver.membersOfQualifier(listOf("origin"), "/test.az", source, source.length)
+        val members = resolver.membersOfQualifier(
+            listOf("origin"), "/test.az", source, source.indexOf("origin.x"),
+        )
         assertEquals(setOf("x", "y"), members.map { it.name }.toSet())
     }
 
@@ -233,7 +289,9 @@ class AzoraResolverTest {
             }
         """.trimIndent()
 
-        val members = resolver.membersOfQualifier(listOf("p"), "/test.az", source, source.length)
+        val members = resolver.membersOfQualifier(
+            listOf("p"), "/test.az", source, source.indexOf("p.distanceTo"),
+        )
         assertTrue(members.any { it.name == "distanceTo" }, "got ${members.map { it.name }}")
     }
 
@@ -254,7 +312,9 @@ class AzoraResolverTest {
             }
         """.trimIndent()
 
-        val members = resolver.membersOfQualifier(listOf("config", "server"), "/test.az", source, source.length)
+        val members = resolver.membersOfQualifier(
+            listOf("config", "server"), "/test.az", source, source.indexOf("config.server.port"),
+        )
         assertTrue(members.any { it.name == "port" }, "got ${members.map { it.name }}")
     }
 
@@ -280,7 +340,10 @@ class AzoraResolverTest {
     fun `enum variants are offered on the enum name`() {
         val source = """
             enum Direction {
-                North, South, East, West
+                North
+                South
+                East
+                West
             }
         """.trimIndent()
 

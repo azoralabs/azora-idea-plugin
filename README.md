@@ -27,10 +27,10 @@
   teal types, colored string interpolation and escapes, wavy diagnostics. Every category has a light and a dark
   default and is overridable under **Editor | Color Scheme | Azora**. Realm-qualified paths such as `ide::editor`
   are styled as complete paths, not just their first segment.
-- **Macros are discovered, not hardcoded.** A name is a macro because a `meta`, `infx`, or current `macro @name`
+- **Macros are discovered, not hardcoded.** A name is a macro because a `macro @name`
   declaration in your project, the SDK, or a dependency says so. That is what lets a *keyword-named* macro work
-  correctly: `with` is a keyword in `with (ctx) { … }` and a macro in `Query<Position with Velocity>`, because
-  `azora-engine` declares `$Base @with $Filter`.
+  correctly: `with` remains a keyword while `@with` is a macro in
+  `@query [Position!, Velocity&] @with Render @without Disabled`.
 - **Smart casts** are highlighted for the extent of the narrowing (`if x is T`, `guard … is T`, `when` arms).
 - **Inferred-type inlay hints**, off by default, under **Settings | Editor | Inlay Hints | Azora**.
 
@@ -38,21 +38,22 @@
 
 - **Completion** that follows context: real members after `.` and `::`, real module paths in imports, a type's
   fields inside its constructor call, the macros your project declares, and keywords only once you start a word.
-- **Live templates** for every declaration form in the 0.0.5 grammar (`func`, `pack`, `spec`, `meta`, `macro`, `test`, …).
+- **Live templates** for current declaration forms (`func`, `react func`, `react ctor`, `pack`, `spec`, `annot`, `macro`, `test`, …).
 - **Go-to-declaration** and **quick documentation** resolve symbols by use-site context — locals and parameters before
   file declarations, members against their receiver's type, and types/callables by their role rather than by spelling.
   Declarations in the SDK and in path dependencies are navigable.
-- **Diagnostics** underlined on the exact text at fault, with quick fixes for module typos, unknown escapes,
+- **Diagnostics** underlined on the exact text at fault, with unused-local warnings and quick fixes for naming,
+  constructor/enum shorthand, numeric literals or casts, module/annotation typos, unknown escapes,
   unterminated strings and stray brackets.
 - **Structure view**, **find usages**, **folding**, **brace matching**, **commenting**, and **indentation**.
 
 ### Projects and running
 
-- **`.azon` support**: syntax highlighting and validation for AZON manifests and data files, including checks that
+- **`.azon` support**: syntax highlighting, validation, automatic indentation, code-style settings, and Reformat Code for AZON manifests and data files, including checks that
   declared targets exist and that dependency paths resolve.
 - **Project templates**: executable, library, and multi-module workspace, each scaffolded with AZON manifests,
   sources, and a test block.
-- **Run gutter icons** on `func main`, `task main`, and every `test` block, plus one run configuration per target
+- **Run gutter icons** on `func main` (including `async`/`react` forms) and every `test` block, plus one run configuration per target
   declared in your manifests.
 
 ## Requirements
@@ -65,11 +66,12 @@
 
 ### 0.0.7
 
-- Updated syntax and contextual keyword highlighting to the current Azora vocabulary.
-- Fixed complete italic highlighting for realm-qualified paths such as `ide::editor`.
-- Restored stdlib and dependency symbol visibility for current `module`/`realm` sources and legacy `mod`/`zone` SDK sources.
-- Reworked go-to-declaration selection around use-site symbol roles, including local shadowing, member receivers, types, callables, and exact local/parameter declaration targets.
-- Scoped generic type-parameter highlighting to its declaring construct.
+- Synchronized all compiler keywords and contextual words, including `assoc`, `derives`, and `without`; `reflect` is correctly treated as a function.
+- Corrected context colors: yellow annotations, orange generics, blue loop labels, ordinary function text, and complete italic realm paths.
+- Rebuilt hover and go-to-declaration around actual symbols and use roles, including lexical shadowing, members, exact offsets, stdlib, and dependencies.
+- Fixed exact-prefix completion (`Anchor` no longer becomes `TilemapAnchor`) and current annotation/macro completion.
+- Added unused-local and clean-code warnings with automatic fixes for naming, shorthand expressions, numeric literals/casts, imports, annotations, strings, and brackets.
+- Added automatic indentation, code-style settings, and Reformat Code for nested comma-free `.azon` objects and arrays; updated Azora indentation, structure view, project templates, run markers, snippets, and live templates to current syntax.
 
 ## Installation
 

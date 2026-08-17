@@ -370,10 +370,11 @@ class AzoraFoldingBuilder : FoldingBuilderEx() {
 
         /** Keywords whose brace blocks are candidates for folding with context. */
         private val FOLDABLE_KEYWORDS = listOf(
-            "view", "pack", "enum", "slot", "fail", "zone", "impl",
-            "solo", "wrap", "bridge", "func", "hook", "task", "flow",
-            "test", "when", "for", "while", "loop", "if", "else",
-            "spec", "deco", "unsafe", "defer",
+            "pack", "enum", "error", "realm", "impl", "solo", "bridge",
+            "func", "test", "when", "for", "while", "loop", "if", "else",
+            "try", "catch", "rescue", "spec", "annot", "graph", "macro",
+            "ctor", "dtor", "oper", "unsafe", "defer", "scope", "effect",
+            "in", "out",
         )
     }
 }

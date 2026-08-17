@@ -93,19 +93,19 @@ class AzoraSyntaxHighlighter : SyntaxHighlighterBase() {
         /** General-purpose keywords (`true`, `false`, `null`). */
         val KEYWORD = key("AZORA_KEYWORD", AzoraPalette.bold(AzoraPalette.KEYWORD))
 
-        /** Declaration keywords (`func`, `pack`, `enum`, `slot`, `meta`, …). */
+        /** Declaration keywords (`func`, `pack`, `enum`, `variant`, `annot`, …). */
         val DECLARATION_KEYWORD = key("AZORA_DECLARATION_KEYWORD", AzoraPalette.bold(AzoraPalette.KEYWORD))
 
         /** Control-flow keywords (`if`, `else`, `for`, `return`, `with`, …). */
         val CONTROL_KEYWORD = key("AZORA_CONTROL_KEYWORD", AzoraPalette.bold(AzoraPalette.KEYWORD))
 
-        /** Modifier keywords (`expose`, `confine`, `inline`, `opaque`, …). */
+        /** Modifier keywords (`exposed`, `confined`, `inline`, `react`, …). */
         val MODIFIER_KEYWORD = key("AZORA_MODIFIER_KEYWORD", AzoraPalette.bold(AzoraPalette.KEYWORD))
 
-        /** Memory keywords (`alloc`, `drop`, `unsafe`, `deref`). */
+        /** Memory keywords (`alloc`, `purge`, `take`, `unsafe`, `preserve`). */
         val MEMORY_KEYWORD = key("AZORA_MEMORY_KEYWORD", AzoraPalette.bold(AzoraPalette.KEYWORD))
 
-        /** Reactive keywords (`mem`, `rem`, `ret`, `effect`). */
+        /** Reactive keywords (`remember`, `retain`, `effect`). */
         val REACTIVE_KEYWORD = key("AZORA_REACTIVE_KEYWORD", AzoraPalette.bold(AzoraPalette.KEYWORD))
 
         // ── Identifiers ────────────────────────────────────────────────
@@ -116,7 +116,10 @@ class AzoraSyntaxHighlighter : SyntaxHighlighterBase() {
         /** Generic type parameters (`T`, `U`, …). */
         val TYPE_PARAMETER = key("AZORA_TYPE_PARAMETER", AzoraPalette.bold(AzoraPalette.TYPE_PARAMETER))
 
-        /** Named types: packs, enums, slots, fails, specs, zones, aliases. */
+        /** A loop label and the same label after `break:` / `continue:`. */
+        val LOOP_LABEL = key("AZORA_LOOP_LABEL", AzoraPalette.fg(AzoraPalette.LABEL))
+
+        /** Named types: packs, enums, errors, specs, realms, and aliases. */
         val TYPE_NAME = key("AZORA_TYPE_NAME", AzoraPalette.fg(AzoraPalette.TYPE))
 
         /** The name in a type declaration (`pack ‹Point›`). */
@@ -125,13 +128,13 @@ class AzoraSyntaxHighlighter : SyntaxHighlighterBase() {
         /** A spec declaration or reference. */
         val SPEC_TYPE = key("AZORA_SPEC_TYPE", AzoraPalette.italic(AzoraPalette.TYPE))
 
-        /** A zone segment used before `::`. */
+        /** A realm path segment, including every segment around `::`. */
         val ZONE_USAGE = key("AZORA_ZONE_USAGE", AzoraPalette.italic(AzoraPalette.FOREGROUND))
 
         /** A segment of an `import` module path. */
         val MODULE_PATH = key("AZORA_MODULE_PATH", AzoraPalette.italic(AzoraPalette.FOREGROUND))
 
-        /** A called function, task or flow. */
+        /** A called function. */
         val FUNCTION_CALL = key("AZORA_FUNCTION_CALL", AzoraPalette.fg(AzoraPalette.FUNCTION))
 
         /** The name in a function declaration (`func ‹main›`). */

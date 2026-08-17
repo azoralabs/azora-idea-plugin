@@ -53,13 +53,14 @@ class AzoraGoToDeclarationHandler : GotoDeclarationHandler {
         editor: Editor?
     ): Array<PsiElement>? {
         if (sourceElement == null) return null
-        val elementType = sourceElement.node?.elementType
+        val effectiveElement = annotationIdentifier(sourceElement) ?: sourceElement
+        val elementType = effectiveElement.node?.elementType
         if (elementType != AzoraTokenTypes.IDENTIFIER && elementType != AzoraTokenTypes.TYPE_PARAMETER) {
             return null
         }
 
-        val file = sourceElement.containingFile ?: return null
-        val project = sourceElement.project
+        val file = effectiveElement.containingFile ?: return null
+        val project = effectiveElement.project
         val filePath = file.virtualFile?.path ?: file.name
         val content = file.text
 
@@ -67,17 +68,28 @@ class AzoraGoToDeclarationHandler : GotoDeclarationHandler {
         val resolver = AzoraResolver(project, service)
 
         // Anchor on the identifier itself: `offset` can land on either edge.
-        val anchor = sourceElement.textRange.startOffset
+        val anchor = effectiveElement.textRange.startOffset
         val symbols = resolver.resolve(filePath, content, anchor)
         if (symbols.isEmpty()) return null
 
         val targets = symbols.asSequence()
-            .distinctBy { "${it.filePath}:${it.line}:${it.name}" }
+            .distinctBy { "${it.filePath}:${it.offset}:${it.kind}:${it.name}" }
             .mapNotNull { toElement(it, project, file, filePath) }
             .take(MAX_TARGETS)
             .toList()
 
         return targets.ifEmpty { null }?.toTypedArray()
+    }
+
+    /** Lets Ctrl-click on the `@` itself navigate to the declared annotation/macro. */
+    private fun annotationIdentifier(element: PsiElement): PsiElement? {
+        if (element.node?.elementType != AzoraTokenTypes.DECORATOR || element.text != "@") return null
+        val file = element.containingFile ?: return null
+        val match = ANNOTATION_AT.find(file.text, element.textRange.startOffset)
+            ?.takeIf { it.range.first == element.textRange.startOffset }
+            ?: return null
+        val finalName = match.groups[1] ?: return null
+        return file.findElementAt(finalName.range.first)
     }
 
     /** Turns a resolved symbol into a navigable element, or `null`. */
@@ -91,16 +103,25 @@ class AzoraGoToDeclarationHandler : GotoDeclarationHandler {
 
         // A local binding or parameter has no file of its own; it lives here.
         if (targetPath == null) {
-            return if (symbol.offset > 0) elementAtOffset(currentFile, symbol.offset) else null
+            return exactElement(currentFile, symbol) ?: elementAtLine(currentFile, symbol.line, symbol.name)
         }
         if (targetPath == SYNTHETIC) return null
         if (targetPath == currentFilePath || targetPath == currentFile.name) {
-            return elementAtLine(currentFile, symbol.line, symbol.name)
+            return exactElement(currentFile, symbol) ?: elementAtLine(currentFile, symbol.line, symbol.name)
         }
 
         val virtualFile = findVirtualFile(targetPath, project) ?: return null
         val psiFile = PsiManager.getInstance(project).findFile(virtualFile) ?: return null
-        return elementAtLine(psiFile, symbol.line, symbol.name)
+        return exactElement(psiFile, symbol) ?: elementAtLine(psiFile, symbol.line, symbol.name)
+    }
+
+    /** Uses the indexer's exact identifier offset when it matches this snapshot. */
+    private fun exactElement(file: PsiFile, symbol: SymbolInfo): PsiElement? {
+        if (symbol.offset !in 0 until file.textLength) return null
+        val sourceName = symbol.name.substringAfterLast("::").substringAfterLast('.')
+        val end = symbol.offset + sourceName.length
+        if (end > file.textLength || file.text.substring(symbol.offset, end) != sourceName) return null
+        return elementAtOffset(file, symbol.offset)
     }
 
     /**
@@ -153,7 +174,7 @@ class AzoraGoToDeclarationHandler : GotoDeclarationHandler {
      * the project's own `.az` files.
      */
     private fun findVirtualFile(path: String, project: Project): VirtualFile? {
-        LocalFileSystem.getInstance().findFileByPath(path)?.let { return it }
+        LocalFileSystem.getInstance().refreshAndFindFileByPath(path)?.let { return it }
         return FileTypeIndex.getFiles(AzoraFileType.INSTANCE, GlobalSearchScope.allScope(project))
             .firstOrNull { it.path == path || it.name == path }
     }
@@ -164,5 +185,6 @@ class AzoraGoToDeclarationHandler : GotoDeclarationHandler {
 
         /** Ctrl-click shows a chooser beyond one target; keep the list short. */
         const val MAX_TARGETS = 8
+        val ANNOTATION_AT = Regex("""@(?:[A-Za-z_$][\w$]*::)*([A-Za-z_$][\w$]*)""")
     }
 }

@@ -68,8 +68,8 @@ class AzoraSemanticModelTest {
     }
 
     @Test
-    fun `a keyword-named macro is a macro between operands and a keyword elsewhere`() {
-        val macros = AzoraMacros(infix = setOf("with"))
+    fun `a keyword-named macro is colored only after its sigil`() {
+        val macros = AzoraMacros(prefix = setOf("with"))
 
         // Statement position: `with (ctx) { … }` is the language's own keyword.
         assertNull(
@@ -77,10 +77,11 @@ class AzoraSemanticModelTest {
             "`with` opening a context block must keep its keyword color",
         )
 
-        // Operator position: `Base with Filter` is the engine's type macro.
+        // Query-clause position: the sigil changes the contextual keyword into
+        // a macro token without changing `with` globally.
         assertEquals(
             AzoraSyntaxHighlighter.MACRO,
-            keyFor("fin q: Query<Position with Velocity> = make()", "with", macros),
+            keyFor("fin q = @query [Position!] @with Player", "with", macros),
         )
     }
 
@@ -94,12 +95,8 @@ class AzoraSemanticModelTest {
     }
 
     @Test
-    fun `an unknown identifier between operands is treated as an infix macro`() {
-        // Azora has no other meaning for `a word b`, so this is safe to color.
-        assertEquals(
-            AzoraSyntaxHighlighter.MACRO,
-            keyFor("fin pair = \"a\" joinedWith 1", "joinedWith"),
-        )
+    fun `an identifier without an at sigil is never guessed to be a macro`() {
+        assertNotEquals(AzoraSyntaxHighlighter.MACRO, keyFor("fin pair = a joinedWith b", "joinedWith"))
     }
 
     @Test
@@ -115,11 +112,11 @@ class AzoraSemanticModelTest {
     }
 
     @Test
-    fun `a declared prefix macro applied to an operand is colored`() {
+    fun `a declared prefix macro applied with at is colored`() {
         val macros = AzoraMacros(prefix = setOf("res"))
         assertEquals(
             AzoraSyntaxHighlighter.MACRO,
-            keyFor("func system(world: res World) {\n}", "res", macros),
+            keyFor("func system(world: @res World) {\n}", "res", macros),
         )
     }
 
@@ -185,7 +182,7 @@ class AzoraSemanticModelTest {
         val source = """
             pack App { fin name: String }
             impl App {
-                func greet(): String { self& ->
+                func greet[self: Self&](): String {
                     return self.name
                 }
             }
@@ -232,13 +229,13 @@ class AzoraSemanticModelTest {
         assertEquals(AzoraSyntaxHighlighter.ZONE_USAGE, keyFor(source, "ide", occurrence = 0))
         assertEquals(AzoraSyntaxHighlighter.ZONE_USAGE, keyFor(source, "editor", occurrence = 0))
         assertEquals(AzoraSyntaxHighlighter.ZONE_USAGE, keyFor(source, "std", occurrence = 1))
-        assertEquals(AzoraSyntaxHighlighter.ZONE_USAGE, keyFor(source, "println", occurrence = 0))
+        assertNull(keyFor(source, "println", occurrence = 0))
     }
 
     @Test
     fun `generic parameters are blue semantic generics and unused declarations are dimmed`() {
         val source = """
-            func<T> identity(value: T): T {
+            func identity<T>(value: T): T {
                 fin unused = 1
                 return value
             }

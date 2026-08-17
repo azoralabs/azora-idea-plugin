@@ -39,22 +39,18 @@ class AzoraDocumentationProvider : AbstractDocumentationProvider() {
 
     override fun generateDoc(element: PsiElement?, originalElement: PsiElement?): String? {
         val target = originalElement ?: element ?: return null
-        if (target.node?.elementType == AzoraTokenTypes.DECORATOR) {
-            return renderAnnotationDoc(target.text.removePrefix("@"))
-        }
-        val symbol = resolve(target) ?: return null
-        return renderDocumentation(symbol)
+        val effective = annotationIdentifier(target) ?: target
+        resolve(effective)?.let { return renderDocumentation(it) }
+        return annotationName(effective)?.let(::renderAnnotationDoc)
     }
 
     override fun getQuickNavigateInfo(element: PsiElement?, originalElement: PsiElement?): String? {
         val target = originalElement ?: element ?: return null
-        if (target.node?.elementType == AzoraTokenTypes.DECORATOR) {
-            return AzoraLanguageFacts.builtinAnnotations
-                .find { it.name == target.text.removePrefix("@") }
-                ?.description
+        val effective = annotationIdentifier(target) ?: target
+        resolve(effective)?.let { return signatureOf(it) }
+        return annotationName(effective)?.let { name ->
+            AzoraLanguageFacts.builtinAnnotations.find { it.name == name }?.description
         }
-        val symbol = resolve(target) ?: return null
-        return signatureOf(symbol)
     }
 
     /** Resolves the symbol under [target], or `null` when it is not a name. */
@@ -71,6 +67,28 @@ class AzoraDocumentationProvider : AbstractDocumentationProvider() {
             file.text,
             target.textRange.startOffset,
         ).firstOrNull()
+    }
+
+    /** The final name token following an `@`, including qualified paths. */
+    private fun annotationIdentifier(target: PsiElement): PsiElement? {
+        if (target.node?.elementType != AzoraTokenTypes.DECORATOR || target.text != "@") return null
+        val file = target.containingFile ?: return null
+        val source = file.text
+        val match = ANNOTATION_AT.find(source, target.textRange.startOffset)
+            ?.takeIf { it.range.first == target.textRange.startOffset }
+            ?: return null
+        val name = match.groups[1] ?: return null
+        return file.findElementAt(name.range.first)
+    }
+
+    /** Built-in annotation name when [target] belongs to an `@...::Name` path. */
+    private fun annotationName(target: PsiElement): String? {
+        if (target.node?.elementType != AzoraTokenTypes.IDENTIFIER) return null
+        val file = target.containingFile ?: return null
+        val lineStart = file.text.lastIndexOf('\n', target.textRange.startOffset - 1) + 1
+        return ANNOTATION_AT.findAll(file.text, lineStart)
+            .firstOrNull { match -> target.textRange.startOffset in match.range }
+            ?.groups?.get(1)?.value
     }
 
     /** The one-line signature shown in the tooltip and at the top of the panel. */
@@ -207,7 +225,7 @@ class AzoraDocumentationProvider : AbstractDocumentationProvider() {
         val annotation = AzoraLanguageFacts.builtinAnnotations.find { it.name == name } ?: return null
         return buildString {
             append(DocumentationMarkup.DEFINITION_START)
-            append("deco @").append(escapeHtml(annotation.name))
+            append("annot ").append(escapeHtml(annotation.name))
             append(DocumentationMarkup.DEFINITION_END)
             append(DocumentationMarkup.CONTENT_START)
             append("<p>").append(escapeHtml(annotation.description)).append("</p>")
@@ -220,13 +238,13 @@ class AzoraDocumentationProvider : AbstractDocumentationProvider() {
     private fun kindLabel(kind: SymbolKind): String = when (kind) {
         SymbolKind.PACK -> "pack"
         SymbolKind.ENUM -> "enum"
-        SymbolKind.FAIL -> "fail"
-        SymbolKind.SLOT -> "slot"
+        SymbolKind.FAIL -> "error"
+        SymbolKind.SLOT -> "variant enum"
         SymbolKind.FUNC -> "func"
-        SymbolKind.VIEW -> "view"
-        SymbolKind.SCOPE -> "zone"
+        SymbolKind.VIEW -> "react func"
+        SymbolKind.SCOPE -> "realm"
         SymbolKind.SOLO -> "solo"
-        SymbolKind.WRAP -> "wrap"
+        SymbolKind.WRAP -> "typealias"
         SymbolKind.VAR -> "var"
         SymbolKind.FIN -> "fin"
         SymbolKind.FIELD -> "field"
@@ -235,13 +253,13 @@ class AzoraDocumentationProvider : AbstractDocumentationProvider() {
         SymbolKind.VARIANT -> "variant"
         SymbolKind.OPERATOR -> "oper"
         SymbolKind.BRIDGE_FUNC -> "bridge func"
-        SymbolKind.TASK -> "task"
-        SymbolKind.FLOW -> "flow"
-        SymbolKind.HOOK -> "hook"
+        SymbolKind.TASK -> "async func"
+        SymbolKind.FLOW -> "func"
+        SymbolKind.HOOK -> "react func"
         SymbolKind.TEST -> "test"
         SymbolKind.SPEC -> "spec"
         SymbolKind.IMPL_SPEC -> "impl"
-        SymbolKind.INFX -> "infx"
+        SymbolKind.INFX -> "macro"
         SymbolKind.BRIDGE -> "bridge"
         SymbolKind.TYPEALIAS -> "typealias"
         SymbolKind.PACKAGE -> "module"
@@ -250,6 +268,9 @@ class AzoraDocumentationProvider : AbstractDocumentationProvider() {
         SymbolKind.CTOR -> "ctor"
         SymbolKind.DTOR -> "dtor"
         SymbolKind.WRAP_BINDING -> "bind"
+        SymbolKind.ANNOT -> "annot"
+        SymbolKind.GRAPH -> "graph"
+        SymbolKind.MACRO -> "macro"
     }
 
     private fun escapeHtml(text: String): String = text
@@ -266,5 +287,6 @@ class AzoraDocumentationProvider : AbstractDocumentationProvider() {
         const val MAX_LISTED_MEMBERS = 20
         val INLINE_CODE = Regex("""`([^`]+)`""")
         val DOC_TAG = Regex("""(?m)^@(\w+)""")
+        val ANNOTATION_AT = Regex("""@(?:[A-Za-z_$][\w$]*::)*([A-Za-z_$][\w$]*)""")
     }
 }

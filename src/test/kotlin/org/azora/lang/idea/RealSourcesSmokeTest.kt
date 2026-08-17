@@ -65,6 +65,17 @@ class RealSourcesSmokeTest {
         assertEquals(source, rebuilt.toString(), "token stream does not reproduce ${file.name}")
     }
 
+    /**
+     * Naming and literal-normalization diagnostics are deliberate editor style
+     * inspections. A source can compile while still receiving one of these, so
+     * the real-source smoke pass excludes them and remains focused on bogus
+     * syntax/lexical errors.
+     */
+    private fun isRequestedStyleDiagnostic(message: String): Boolean =
+        message.contains("must use lowerCamelCase") ||
+            message.contains("must use UpperCamelCase") ||
+            message == "Integer literal does not have the explicitly declared Double type"
+
     @Test
     fun `serializer az lexes and reports no errors`() {
         val file = sibling("azora-lang/std/serializer.az")
@@ -93,7 +104,7 @@ class RealSourcesSmokeTest {
             val errors = annotator
                 .doAnnotate(AzoraAnnotationInfo(file.readText(), file.name, file.path))
                 .diagnostics
-                .filter { it.severity == HighlightSeverity.ERROR }
+                .filter { it.severity == HighlightSeverity.ERROR && !isRequestedStyleDiagnostic(it.message) }
             if (errors.isNotEmpty()) failures.add("${file.name}: ${errors.map { it.message }}")
         }
 
@@ -111,7 +122,7 @@ class RealSourcesSmokeTest {
             val errors = annotator
                 .doAnnotate(AzoraAnnotationInfo(file.readText(), file.name, file.path))
                 .diagnostics
-                .filter { it.severity == HighlightSeverity.ERROR }
+                .filter { it.severity == HighlightSeverity.ERROR && !isRequestedStyleDiagnostic(it.message) }
             if (errors.isNotEmpty()) failures.add("${file.name}: ${errors.map { it.message }}")
         }
 
@@ -125,9 +136,13 @@ class RealSourcesSmokeTest {
 
         val macros = AzoraMacroScanner.scan(file!!.readText())
 
-        // This is the case the highlighting design turns on: language keywords
-        // that a real dependency also declares as infix macros.
-        assertTrue("with" in macros.infix, "expected 'with' among ${macros.infix}")
-        assertTrue("without" in macros.infix)
+        // `with` and `without` are arms of the prefix `@query` macro. At use
+        // sites they are written `@with` / `@without`, never guessed as bare
+        // infix macros merely because those words occur in the declaration.
+        assertTrue("query" in macros.prefix, "expected 'query' among ${macros.prefix}")
+        assertTrue("with" in macros.prefix, "expected 'with' among ${macros.prefix}")
+        assertTrue("without" in macros.prefix, "expected 'without' among ${macros.prefix}")
+        assertTrue("with" !in macros.infix)
+        assertTrue("without" !in macros.infix)
     }
 }

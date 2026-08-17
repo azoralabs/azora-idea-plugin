@@ -8,15 +8,15 @@
 
         <ul>
             <li>Syntax highlighting in Azora's own palette — shared with the Azora code playground — with bold keywords, purple macros, colored string interpolation, and highlighted smart casts</li>
-            <li>Macros are discovered from the <code>meta</code> declarations in your project, the SDK, and your dependencies, so a keyword-named macro is purple where it is a macro and a keyword everywhere else</li>
+            <li>Macros and annotations are discovered from current <code>macro @name</code> and <code>annot Name</code> declarations in your project, SDK, and dependencies</li>
             <li>Context-aware completion: real members after <code>.</code> and <code>::</code>, real module paths in imports, a type's fields in its constructor call</li>
             <li>Live templates for every Azora declaration form</li>
             <li>Go-to-declaration and quick documentation that resolve symbols by scope and use-site context, including local shadowing, members, imports, stdlib, and dependencies</li>
             <li>Inferred-type inlay hints, toggleable per project</li>
-            <li>Errors underlined precisely, with quick fixes</li>
-            <li>Run gutter icons on <code>func main</code>, <code>task main</code>, and every <code>test</code></li>
-            <li><code>.azon</code> manifest and data file support, plus executable, library, and multi-module workspace project templates</li>
-            <li>Brace matching, folding, structure view, find usages, commenting, and indentation</li>
+            <li>Errors and unused-local warnings underlined precisely, with naming, shorthand, numeric, import, annotation, string, and bracket quick fixes</li>
+            <li>Run gutter icons on current <code>func main</code> forms and every <code>test</code></li>
+            <li><code>.azon</code> manifest and data support with validation, automatic indentation, code-style settings, and Reformat Code, plus executable, library, and multi-module workspace project templates</li>
+            <li>Brace matching, folding, structure view, find usages, commenting, and Azora/AZON indentation</li>
         </ul>
     ]]></description>
 
@@ -135,6 +135,16 @@
         <annotator
             language="AZON"
             implementationClass="org.azora.lang.idea.azon.AzonAnnotator"/>
+
+        <langCodeStyleSettingsProvider
+            implementation="org.azora.lang.idea.azon.AzonCodeStyleSettingsProvider"/>
+
+        <lang.formatter
+            language="AZON"
+            implementationClass="org.azora.lang.idea.azon.AzonFormattingModelBuilder"/>
+
+        <lineIndentProvider
+            implementation="org.azora.lang.idea.azon.AzonLineIndentProvider"/>
 
         <!-- ── Project model ───────────────────────────────────────── -->
 

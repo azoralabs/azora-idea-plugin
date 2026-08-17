@@ -28,8 +28,8 @@ import java.io.File
 /**
  * The macro names visible from some source position, split by invocation form.
  *
- * @param prefix names invoked before their operand — `vec@[…]`, `res T`, `query [T]`.
- * @param infix names invoked between two operands — `a to b`, `Base with Filter`.
+ * @param prefix names invoked before their operand — `@vec[…]`, `@query [T]`.
+ * @param infix names invoked between two operands — `a @to b`, `anchor @applyKey key`.
  */
 data class AzoraMacros(
     val prefix: Set<String> = emptySet(),
@@ -49,7 +49,7 @@ data class AzoraMacros(
 /**
  * Extracts macro declarations from Azora source text.
  *
- * A name is a macro because some `meta` declaration in real source says so —
+ * A name is a macro because some `macro` declaration in real source says so —
  * never because this plugin has a list of blessed words. That is what lets a
  * keyword-named macro such as `with` (declared by `azora-engine`'s ECS module
  * as `$Base with $Filter => $Base`) be highlighted as a macro where it is one
@@ -57,20 +57,15 @@ data class AzoraMacros(
  */
 object AzoraMacroScanner {
 
-    /** `meta .Prefix("name")` — a value macro invoked `name@[…]` or `name x`. */
-    private val prefixMeta = Regex("""meta\s*\.\s*Prefix\s*\(\s*"([^"]*)"\s*\)""")
+    /** Current declarations: `macro @query { ... }` and `macro $a @to $b => ...`. */
+    private val macroDecl = Regex(
+        """(?m)^\s*(?:(?:exposed|protected|confined|inline|deepinline|noinline|bridge)\s+)*macro\b([^\n]*)""",
+    )
 
-    /** `meta .Infix("op")` — an operator macro invoked `a op b`. */
-    private val infixMeta = Regex("""meta\s*\.\s*Infix\s*\(\s*"([^"]*)"\s*\)""")
+    private val macroName = Regex("""@([A-Za-z_$][\w$]*)(?:[!?&*^])?""")
 
-    /** `meta .Type {` / `meta type {` — a block of named type-macro arms. */
-    private val typeMeta = Regex("""meta\s*(?:\.\s*Type|type)\s*\{""")
-
-    /** `infx name` — the dedicated infix-operator declaration form. */
-    private val infxDecl = Regex("""(?m)^\s*(?:\w+\s+)*?infx\s+([A-Za-z_$][\w$]*)""")
-
-    /** `macro $Base @with $Filter => …` — the current arm declaration form. */
-    private val macroDecl = Regex("""(?m)^\s*macro\b[^\n]*?@([A-Za-z_$][\w$]*)""")
+    /** Literal clauses in a macro arm (`$Q with $T without $S`). */
+    private val armWord = Regex("""(?<![$@A-Za-z0-9_])([A-Za-z_][A-Za-z0-9_]*)""")
 
     /**
      * Scans [text] for every macro it declares.
@@ -79,58 +74,45 @@ object AzoraMacroScanner {
      * @return the prefix and infix macro names declared in it.
      */
     fun scan(text: String): AzoraMacros {
-        if (!text.contains("meta") && !text.contains("infx") && !text.contains("macro")) {
+        if (!text.contains("macro")) {
             return AzoraMacros.EMPTY
         }
 
         val prefix = linkedSetOf<String>()
         val infix = linkedSetOf<String>()
 
-        prefixMeta.findAll(text).forEach { normalizeName(it.groupValues[1])?.let(prefix::add) }
-        infixMeta.findAll(text).forEach { normalizeName(it.groupValues[1])?.let(infix::add) }
-        infxDecl.findAll(text).forEach { normalizeName(it.groupValues[1])?.let(infix::add) }
-        macroDecl.findAll(text).forEach { normalizeName(it.groupValues[1])?.let(infix::add) }
+        for (declaration in macroDecl.findAll(codeOnly(text))) {
+            val tail = declaration.groupValues[1]
+            val nameMatch = macroName.find(tail) ?: continue
+            val name = normalizeName(nameMatch.groupValues[1]) ?: continue
+            val beforeName = tail.substring(0, nameMatch.range.first)
+            if ('$' in beforeName) infix.add(name) else prefix.add(name)
 
-        for (match in typeMeta.findAll(text)) {
-            val body = blockBodyAfter(text, match.range.last) ?: continue
-            scanTypeMacroArms(body, prefix, infix)
+            // A block macro may name clause fragments in its arm grammar. They
+            // are invoked with `@` too (`@query [...] @with T @without U`), so
+            // index those literal words as prefix fragments for coloring and
+            // completion. The declaration's own name stays excluded.
+            val open = text.indexOf('{', declaration.range.first)
+            if (open >= 0 && open <= declaration.range.last + 1) {
+                val body = blockBodyAfter(text, open) ?: continue
+                scanArmClauses(body, prefix)
+            }
         }
 
         return AzoraMacros(prefix, infix)
     }
 
-    /**
-     * Reads the arms of a `meta type { … }` block, each of the form
-     * `pattern => expansion`, and records the macro name each one introduces.
-     *
-     * A pattern beginning with a `$hole` is infix (`$Base with $Filter`), so the
-     * word after the hole is the operator; anything else is prefix (`res $T`,
-     * `query [...$T]`), so the last word before the first hole is the name.
-     */
-    private fun scanTypeMacroArms(body: String, prefix: MutableSet<String>, infix: MutableSet<String>) {
+    /** Collects literal arm words that become `@clause` invocation fragments. */
+    private fun scanArmClauses(body: String, prefix: MutableSet<String>) {
         for (rawLine in body.lineSequence()) {
             val line = rawLine.substringBefore("//").trim()
             if (line.isEmpty() || !line.contains("=>")) continue
             val pattern = line.substringBefore("=>").trim()
             if (pattern.isEmpty()) continue
-
-            val words = pattern.split(Regex("""[\s\[\]<>,()]+""")).filter { it.isNotEmpty() }
-            if (words.isEmpty()) continue
-
-            // A hole is any word carrying a `$`; variadic holes are spelled
-            // `...$T`, so the marker is not always the first character.
-            val isHole = { word: String -> word.contains('$') }
-
-            if (isHole(words[0])) {
-                // Infix: the first non-hole word after the left hole is the operator.
-                words.drop(1).firstOrNull { !isHole(it) }
-                    ?.let { normalizeName(it)?.let(infix::add) }
-            } else {
-                // Prefix: the last plain word before the first hole names the macro.
-                words.takeWhile { !isHole(it) }
-                    .lastOrNull()
-                    ?.let { normalizeName(it)?.let(prefix::add) }
-            }
+            armWord.findAll(pattern).map { it.groupValues[1] }
+                .filterNot { it in ARM_GRAMMAR_WORDS }
+                .mapNotNull(::normalizeName)
+                .forEach(prefix::add)
         }
     }
 
@@ -166,6 +148,47 @@ object AzoraMacroScanner {
         if (!(name[0].isLetter() || name[0] == '_')) return null
         return name
     }
+
+    /** Masks comments and literals so declarations written in docs never enter the index. */
+    private fun codeOnly(source: String): String {
+        val chars = source.toCharArray()
+        var index = 0
+        fun blank(at: Int) { if (chars[at] != '\n' && chars[at] != '\r') chars[at] = ' ' }
+        while (index < source.length) {
+            when {
+                source.startsWith("//", index) -> while (index < source.length && source[index] != '\n') blank(index++)
+                source.startsWith("/*", index) -> {
+                    var depth = 0
+                    do {
+                        when {
+                            source.startsWith("/*", index) -> { blank(index); blank(index + 1); index += 2; depth++ }
+                            source.startsWith("*/", index) -> { blank(index); blank(index + 1); index += 2; depth-- }
+                            else -> blank(index++)
+                        }
+                    } while (index < source.length && depth > 0)
+                }
+                source.startsWith("\"\"\"", index) -> {
+                    repeat(3) { blank(index++) }
+                    while (index < source.length && !source.startsWith("\"\"\"", index)) blank(index++)
+                    repeat(minOf(3, source.length - index)) { blank(index++) }
+                }
+                source[index] == '"' || source[index] == '\'' -> {
+                    val quote = source[index]
+                    blank(index++)
+                    while (index < source.length) {
+                        val char = source[index]
+                        blank(index++)
+                        if (char == '\\' && index < source.length) blank(index++)
+                        else if (char == quote) break
+                    }
+                }
+                else -> index++
+            }
+        }
+        return chars.concatToString()
+    }
+
+    private val ARM_GRAMMAR_WORDS = setOf("true", "false", "null")
 }
 
 /**
@@ -190,7 +213,7 @@ class AzoraMacroIndex(private val project: Project) {
     /**
      * Returns every macro visible while editing [content].
      *
-     * The file's own `meta` declarations are always included, so a macro is
+     * The file's own `macro` declarations are always included, so a macro is
      * highlighted the moment it is typed, before any index refresh.
      */
     fun macrosFor(content: String): AzoraMacros = projectMacros() + AzoraMacroScanner.scan(content)

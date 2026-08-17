@@ -38,6 +38,8 @@ data class AzoraSemanticSymbols(
     val types: Set<String> = emptySet(),
     val specTypes: Set<String> = emptySet(),
     val functions: Set<String> = emptySet(),
+    val decorators: Set<String> = emptySet(),
+    val properties: Set<String> = emptySet(),
 ) {
     companion object {
         val EMPTY = AzoraSemanticSymbols()
@@ -55,21 +57,21 @@ data class AzoraSemanticSymbols(
 object AzoraSemanticModel {
 
     /** Declaration keywords whose following name is a function-like symbol. */
-    private val FUNCTION_DECL_KEYWORDS = setOf("func", "task", "flow", "infx", "hook")
+    private val FUNCTION_DECL_KEYWORDS = setOf("func")
 
     /** Declaration keywords whose following name is a type-like symbol. */
     private val TYPE_DECL_KEYWORDS = setOf(
-        "pack", "enum", "variant", "union", "slot", "fail", "error", "typealias", "type", "wrap", "solo",
+        "pack", "enum", "union", "error", "typealias",
     )
 
     /** Namespace declarations whose path is styled as one semantic unit. */
-    private val REALM_DECL_KEYWORDS = setOf("realm", "zone")
+    private val REALM_DECL_KEYWORDS = setOf("realm")
 
     /** Binding declarations whose names may be dimmed when unused. */
-    private val BINDING_KEYWORDS = setOf("var", "fin", "let", "mem", "rem", "ret")
+    private val BINDING_KEYWORDS = setOf("var", "val", "fin", "let")
 
     /** Keywords that introduce a condition which may narrow a binding. */
-    private val NARROWING_HEADS = setOf("if", "while", "guard")
+    private val NARROWING_HEADS = setOf("if", "while")
 
     /**
      * Classifies every token of a file.
@@ -86,11 +88,13 @@ object AzoraSemanticModel {
     ): Map<Int, TextAttributesKey> {
         val result = HashMap<Int, TextAttributesKey>()
         val semantics = collectSemantics(tokens, symbols)
+        val sigilStyles = sigilPathStyles(tokens, macros, semantics)
 
         for (i in tokens.indices) {
             val token = tokens[i]
             val key = when {
-                isMacroUse(tokens, i, macros) -> AzoraSyntaxHighlighter.MACRO
+                i in sigilStyles -> sigilStyles.getValue(i)
+                token.type == AzoraTokenTypes.IDENTIFIER && isLoopLabel(tokens, i) -> AzoraSyntaxHighlighter.LOOP_LABEL
                 token.type == AzoraTokenTypes.TYPE_PARAMETER -> AzoraSyntaxHighlighter.TYPE_PARAMETER
                 token.type == AzoraTokenTypes.IDENTIFIER -> classifyIdentifier(tokens, i, semantics)
                 else -> null
@@ -128,83 +132,107 @@ object AzoraSemanticModel {
         val types: Set<String>,
         val specTypes: Set<String>,
         val functions: Set<String>,
+        val decorators: Set<String>,
+        val properties: Set<String>,
         val typeDeclarations: Set<Int>,
         val specDeclarations: Set<Int>,
         val decoratorDeclarations: Set<Int>,
         val functionDeclarations: List<ScopedDeclaration>,
         val propertyDeclarations: List<ScopedDeclaration>,
+        val fieldDeclarations: List<ScopedDeclaration>,
         val parameters: List<ScopedDeclaration>,
         val variables: List<ScopedDeclaration>,
         val modulePathTokens: Set<Int>,
-        val zoneUsageTokens: Set<Int>,
+        val realmUsageTokens: Set<Int>,
     ) {
         val functionByToken = functionDeclarations.associateBy { it.tokenIndex }
         val propertyByToken = propertyDeclarations.associateBy { it.tokenIndex }
+        val fieldByToken = fieldDeclarations.associateBy { it.tokenIndex }
         val parameterByToken = parameters.associateBy { it.tokenIndex }
         val variableByToken = variables.associateBy { it.tokenIndex }
     }
 
-    // ── Macros ─────────────────────────────────────────────────────────
-
     /**
-     * Decides whether the token at [index] is a macro invocation.
-     *
-     * Two things can make it one:
-     *
-     * * It sits between two operands. An *identifier* there is always an infix
-     *   macro — Azora has no other way to write `a op b` with a word operator —
-     *   so an unknown one is still colored as a macro. A *keyword* there needs
-     *   evidence, because `in`, `is`, `as`, `by` and `reverse` all legitimately
-     *   appear between operands as grammar; a keyword is only a macro when some
-     *   `meta` declaration in [macros] claims that name. This is what makes
-     *   `with` a keyword in `with (ctx) { … }` and a macro in `Base with Filter`
-     *   once `azora-engine` declares it, with nothing about `with` hardcoded.
-     * * It is a declared prefix macro applied to an operand, as in `res T`.
+     * Styles a complete `@realm::Name` path from syntax: lowercase final names
+     * are macros, uppercase final names are decorators. This is the same
+     * distinction enforced by the parser, and keeps the `@`, qualifiers, `::`,
+     * and final name visually coherent without turning the name into one lexer
+     * token (which would make navigation impossible).
      */
-    private fun isMacroUse(tokens: List<AzoraToken>, index: Int, macros: AzoraMacros): Boolean {
-        val token = tokens[index]
-        val isIdentifier = token.type == AzoraTokenTypes.IDENTIFIER
-        val isKeyword = AzoraTokenTypes.KEYWORDS.contains(token.type)
-        if (!isIdentifier && !isKeyword) return false
+    private fun sigilPathStyles(
+        tokens: List<AzoraToken>,
+        macros: AzoraMacros,
+        semantics: Semantics,
+    ): Map<Int, TextAttributesKey> {
+        val result = mutableMapOf<Int, TextAttributesKey>()
+        for (at in tokens.indices) {
+            if (tokens[at].type != AzoraTokenTypes.DECORATOR || tokens[at].text != "@") continue
+            var name = nextMeaningful(tokens, at, sameLine = true) ?: continue
+            if (!isSigilName(tokens[name])) continue
+            val path = mutableListOf(at, name)
+            var final = name
+            while (true) {
+                val separator = nextMeaningful(tokens, final, sameLine = true) ?: break
+                if (!isOperator(tokens[separator], "::")) break
+                val segment = nextMeaningful(tokens, separator, sameLine = true) ?: break
+                if (!isSigilName(tokens[segment])) break
+                path += separator
+                path += segment
+                final = segment
+            }
+            val finalName = tokens[final].text
+            val style = when {
+                finalName in macros.all -> AzoraSyntaxHighlighter.MACRO
+                finalName in semantics.decorators -> AzoraSyntaxHighlighter.DECORATOR
+                finalName.firstOrNull()?.isUpperCase() == true -> AzoraSyntaxHighlighter.DECORATOR
+                else -> AzoraSyntaxHighlighter.MACRO
+            }
+            path.forEach { result[it] = style }
 
-        val prev = prevMeaningful(tokens, index, sameLine = true)
-        val next = nextMeaningful(tokens, index, sameLine = true)
-
-        // A qualified name (`a.b`, `a::b`) is member access, never a macro.
-        if (prev != null && isMemberSeparator(tokens[prev])) return false
-        // The name being declared is not a use of it.
-        if (prev != null && AzoraTokenTypes.KEYWORDS.contains(tokens[prev].type)) {
-            if (tokens[prev].text in FUNCTION_DECL_KEYWORDS || tokens[prev].text in TYPE_DECL_KEYWORDS) return false
+            // Mutable macro spellings (`@vec!`) include the suffix in the
+            // invocation's semantic unit even though `!` remains an operator
+            // token for navigation-friendly lexing.
+            nextMeaningful(tokens, final, sameLine = true)
+                ?.takeIf { isOperator(tokens[it], "!") && finalName in macros.prefix }
+                ?.let { result[it] = style }
         }
-
-        val leftIsOperand = prev != null && AzoraTokenTypes.OPERAND_ENDERS.contains(tokens[prev].type)
-        val rightIsOperand = next != null && startsOperand(tokens, index, next)
-
-        if (leftIsOperand && rightIsOperand) {
-            return if (isIdentifier) true else token.text in macros.infix
-        }
-        if (rightIsOperand && token.text in macros.prefix && !leftIsOperand) return true
-        return false
+        return result
     }
 
-    /**
-     * True when the token at [next] begins an operand for the word at [index].
-     *
-     * `foo(…)` and `foo[…]` written without a space are a call and an index, so
-     * a bracket that is glued to the word does not count as a fresh operand.
-     */
-    private fun startsOperand(tokens: List<AzoraToken>, index: Int, next: Int): Boolean {
-        val candidate = tokens[next]
-        if (!AzoraTokenTypes.OPERAND_STARTERS.contains(candidate.type)) return false
-        val glued = candidate.start == tokens[index].end
-        if (glued && (candidate.type == AzoraTokenTypes.L_PAREN || candidate.type == AzoraTokenTypes.L_BRACKET)) {
-            return false
-        }
-        return true
-    }
+    private fun isSigilName(token: AzoraToken): Boolean =
+        token.type == AzoraTokenTypes.IDENTIFIER || AzoraTokenTypes.KEYWORDS.contains(token.type)
 
     private fun isMemberSeparator(token: AzoraToken): Boolean =
         token.type == AzoraTokenTypes.DOT || (token.type == AzoraTokenTypes.OPERATOR && token.text == "::")
+
+    private fun isAfterMemberSeparator(tokens: List<AzoraToken>, index: Int): Boolean =
+        prevMeaningful(tokens, index, sameLine = true)?.let { isMemberSeparator(tokens[it]) } == true
+
+    private fun isAfterAtPath(tokens: List<AzoraToken>, index: Int): Boolean {
+        var cursor = index
+        while (true) {
+            val previous = prevMeaningful(tokens, cursor, sameLine = true) ?: return false
+            if (tokens[previous].type == AzoraTokenTypes.DECORATOR && tokens[previous].text == "@") return true
+            if (!isOperator(tokens[previous], "::")) return false
+            val segment = prevMeaningful(tokens, previous, sameLine = true) ?: return false
+            if (tokens[segment].type != AzoraTokenTypes.IDENTIFIER) return false
+            cursor = segment
+        }
+    }
+
+    /** `name: for/while/reverse for/loop` and `break:name`/`continue:name`. */
+    private fun isLoopLabel(tokens: List<AzoraToken>, index: Int): Boolean {
+        val previous = prevMeaningful(tokens, index, sameLine = true)
+        if (previous != null && tokens[previous].type == AzoraTokenTypes.COLON) {
+            val head = prevMeaningful(tokens, previous, sameLine = true)
+            if (head != null && tokens[head].text in setOf("break", "continue")) return true
+        }
+
+        val colon = nextMeaningful(tokens, index, sameLine = true) ?: return false
+        if (tokens[colon].type != AzoraTokenTypes.COLON) return false
+        val loop = nextMeaningful(tokens, colon, sameLine = true) ?: return false
+        return tokens[loop].text in setOf("for", "while", "loop", "reverse")
+    }
 
     // ── Identifiers ────────────────────────────────────────────────────
 
@@ -217,12 +245,13 @@ object AzoraSemanticModel {
         val next = nextMeaningful(tokens, index, sameLine = true)?.let { tokens[it] }
 
         if (index in semantics.modulePathTokens) return AzoraSyntaxHighlighter.MODULE_PATH
-        if (index in semantics.zoneUsageTokens) return AzoraSyntaxHighlighter.ZONE_USAGE
+        if (index in semantics.realmUsageTokens) return AzoraSyntaxHighlighter.ZONE_USAGE
         if (index in semantics.decoratorDeclarations) return AzoraSyntaxHighlighter.DECORATOR
         if (index in semantics.specDeclarations) return AzoraSyntaxHighlighter.SPEC_TYPE
         if (index in semantics.typeDeclarations) return AzoraSyntaxHighlighter.TYPE_DECLARATION
         semantics.functionByToken[index]?.let { return functionStyle(it.context) }
         semantics.propertyByToken[index]?.let { return propertyStyle(it.context) }
+        if (semantics.fieldByToken.containsKey(index)) return AzoraSyntaxHighlighter.FIELD
         if (semantics.parameterByToken.containsKey(index) || token.text in IMPLICIT_PARAMETERS) {
             return AzoraSyntaxHighlighter.PARAMETER
         }
@@ -238,10 +267,19 @@ object AzoraSemanticModel {
             }
         }
 
-        val isCall = next != null && next.type == AzoraTokenTypes.L_PAREN && next.start == token.end
+        val isCall = next != null && (
+            next.type == AzoraTokenTypes.L_PAREN ||
+                (isOperator(next, "<") && token.text in semantics.functions)
+            )
+        if (token.text in semantics.decorators && isAfterAtPath(tokens, index)) {
+            return AzoraSyntaxHighlighter.DECORATOR
+        }
         if (token.text in semantics.specTypes) return AzoraSyntaxHighlighter.SPEC_TYPE
         if (token.text in semantics.types) return AzoraSyntaxHighlighter.TYPE_NAME
         if (isCall && token.text in semantics.functions) return AzoraSyntaxHighlighter.FUNCTION_CALL
+        if (token.text in semantics.properties && isAfterMemberSeparator(tokens, index)) {
+            return AzoraSyntaxHighlighter.FIELD
+        }
         if (isParameterReference(tokens, index, semantics.parameters)) return AzoraSyntaxHighlighter.PARAMETER
 
         return null
@@ -267,6 +305,7 @@ object AzoraSemanticModel {
         val specDeclarations = linkedSetOf<Int>()
         val decoratorDeclarations = linkedSetOf<Int>()
         val callableHeads = mutableListOf<Pair<Int, Int>>()
+        val anonymousCallableHeads = mutableListOf<Int>()
         val propertyHeads = mutableListOf<Pair<Int, Int>>()
         val bindingHeads = mutableListOf<Pair<Int, Int>>()
 
@@ -276,17 +315,17 @@ object AzoraSemanticModel {
             when (token.text) {
                 in TYPE_DECL_KEYWORDS -> declarationNameAfter(tokens, i)?.let { typeDeclarations.add(it) }
                 "spec" -> declarationNameAfter(tokens, i)?.let { specDeclarations.add(it) }
-                "deco" -> declarationNameAfter(tokens, i)?.let { decoratorDeclarations.add(it) }
+                "annot" -> declarationNameAfter(tokens, i)?.let { decoratorDeclarations.add(it) }
                 in FUNCTION_DECL_KEYWORDS -> callableNameAfter(tokens, i)?.let { callableHeads.add(i to it) }
+                "ctor", "dtor", "oper" -> anonymousCallableHeads.add(i)
                 "prop" -> declarationNameAfter(tokens, i)?.let { propertyHeads.add(i to it) }
                 in BINDING_KEYWORDS -> declarationNameAfter(tokens, i)?.let { bindingHeads.add(i to it) }
             }
         }
 
-        val callableScopes = callableHeads.mapIndexed { position, (head, _) ->
-            val end = callableHeads.getOrNull(position + 1)?.first?.minus(1) ?: tokens.lastIndex
-            head..end
-        }
+        val namedCallableScopes = callableHeads.map { (head, _) -> declarationScope(tokens, head) }
+        val anonymousCallableScopes = anonymousCallableHeads.map { declarationScope(tokens, it) }
+        val callableScopes = namedCallableScopes + anonymousCallableScopes
         val functionDeclarations = callableHeads.map { (_, nameIndex) ->
             ScopedDeclaration(
                 tokens[nameIndex].text,
@@ -303,15 +342,30 @@ object AzoraSemanticModel {
                 memberContext(nameIndex, specBodies, overrideBodies),
             )
         }
-        val parameters = functionDeclarations.mapIndexed { position, declaration ->
-            parameterDeclarations(tokens, declaration.copy(scope = callableScopes[position]))
-        }.flatten()
-        val variables = bindingHeads.map { (head, nameIndex) ->
+        val parameterOwners = buildList {
+            functionDeclarations.forEachIndexed { position, declaration ->
+                add(declaration.copy(scope = namedCallableScopes[position]))
+            }
+            anonymousCallableHeads.forEachIndexed { position, head ->
+                add(ScopedDeclaration(tokens[head].text, head, anonymousCallableScopes[position]))
+            }
+        }
+        val parameters = parameterOwners.flatMap { parameterDeclarations(tokens, it) }
+        val fieldBodies = listOf("pack", "union", "error", "annot")
+            .flatMap { declarationBodies(tokens, it) }
+        val fieldHeads = bindingHeads.filter { (head, _) ->
+            callableScopes.none { head in it } && fieldBodies.any { head in it }
+        }
+        val fields = fieldHeads.map { (_, nameIndex) ->
+            ScopedDeclaration(tokens[nameIndex].text, nameIndex, 0..tokens.lastIndex)
+        }
+        val variables = bindingHeads.filterNot { it in fieldHeads }.map { (head, nameIndex) ->
             val enclosing = callableScopes.lastOrNull { head in it }
+            val lexical = enclosingBlock(tokens, head)?.let { head..it.last }
             ScopedDeclaration(
                 tokens[nameIndex].text,
                 nameIndex,
-                enclosing ?: (head..tokens.lastIndex),
+                lexical ?: enclosing ?: (head..tokens.lastIndex),
             )
         }
 
@@ -319,39 +373,42 @@ object AzoraSemanticModel {
             types = external.types + typeDeclarations.map { tokens[it].text },
             specTypes = external.specTypes + specDeclarations.map { tokens[it].text },
             functions = external.functions + functionDeclarations.map { it.name },
+            decorators = external.decorators + decoratorDeclarations.map { tokens[it].text },
+            properties = external.properties + properties.map { it.name } + fields.map { it.name },
             typeDeclarations = typeDeclarations,
             specDeclarations = specDeclarations,
             decoratorDeclarations = decoratorDeclarations,
             functionDeclarations = functionDeclarations,
             propertyDeclarations = properties,
+            fieldDeclarations = fields,
             parameters = parameters,
             variables = variables,
             modulePathTokens = modulePathTokens(tokens),
-            zoneUsageTokens = zoneUsageTokens(tokens),
+            realmUsageTokens = realmUsageTokens(tokens),
         )
     }
 
-    /** Finds the first declared identifier after a keyword and optional generic header. */
+    /** Finds the declared name immediately after a current-language declaration head. */
     private fun declarationNameAfter(tokens: List<AzoraToken>, head: Int): Int? {
-        var index = nextMeaningful(tokens, head, sameLine = false) ?: return null
-        index = skipGenericHeader(tokens, index) ?: return null
+        val index = nextMeaningful(tokens, head, sameLine = false) ?: return null
         val token = tokens[index]
         return index.takeIf { token.type == AzoraTokenTypes.IDENTIFIER }
     }
 
-    /** Finds the last identifier before a callable's parameter list. */
+    /** Finds a function name, whose optional `<...>` follows the name. */
     private fun callableNameAfter(tokens: List<AzoraToken>, head: Int): Int? {
-        var index = nextMeaningful(tokens, head, sameLine = false) ?: return null
-        index = skipGenericHeader(tokens, index) ?: return null
-        var candidate: Int? = null
-        while (index < tokens.size) {
-            val token = tokens[index]
-            if (token.type == AzoraTokenTypes.L_PAREN) return candidate
-            if (token.type == AzoraTokenTypes.L_BRACE || token.type == AzoraTokenTypes.SEMICOLON) return candidate
-            if (token.type == AzoraTokenTypes.IDENTIFIER) candidate = index
-            index = nextMeaningful(tokens, index, sameLine = false) ?: break
+        val name = declarationNameAfter(tokens, head) ?: return null
+        var cursor = nextMeaningful(tokens, name, sameLine = false) ?: return name
+        if (isOperator(tokens[cursor], "<")) {
+            cursor = skipGenericHeader(tokens, cursor) ?: return name
         }
-        return candidate
+        // A bracketed receiver is legal between a name and its parameter list.
+        if (tokens.getOrNull(cursor)?.type == AzoraTokenTypes.L_BRACKET) {
+            cursor = matchingDelimiter(tokens, cursor, AzoraTokenTypes.L_BRACKET, AzoraTokenTypes.R_BRACKET)
+                ?.let { nextMeaningful(tokens, it, sameLine = false) }
+                ?: return name
+        }
+        return name.takeIf { tokens.getOrNull(cursor)?.type == AzoraTokenTypes.L_PAREN }
     }
 
     /** Skips `<...>` when [index] starts a generic declaration header. */
@@ -365,6 +422,10 @@ object AzoraSemanticModel {
                 isOperator(tokens[cursor], ">") -> {
                     depth--
                     if (depth == 0) return nextMeaningful(tokens, cursor, sameLine = false)
+                }
+                isOperator(tokens[cursor], ">>") -> {
+                    depth -= 2
+                    if (depth <= 0) return nextMeaningful(tokens, cursor, sameLine = false)
                 }
             }
             cursor++
@@ -425,6 +486,75 @@ object AzoraSemanticModel {
         return null
     }
 
+    private fun matchingDelimiter(
+        tokens: List<AzoraToken>,
+        open: Int,
+        opener: IElementType,
+        closer: IElementType,
+    ): Int? {
+        var depth = 0
+        for (index in open until tokens.size) {
+            when (tokens[index].type) {
+                opener -> depth++
+                closer -> {
+                    depth--
+                    if (depth == 0) return index
+                }
+            }
+        }
+        return null
+    }
+
+    /** The signature plus body of a callable declaration. */
+    private fun declarationScope(tokens: List<AzoraToken>, head: Int): IntRange {
+        var parens = 0
+        var brackets = 0
+        var angles = 0
+        var index = head + 1
+        while (index < tokens.size) {
+            val token = tokens[index]
+            when {
+                token.type == AzoraTokenTypes.L_PAREN -> parens++
+                token.type == AzoraTokenTypes.R_PAREN -> parens = (parens - 1).coerceAtLeast(0)
+                token.type == AzoraTokenTypes.L_BRACKET -> brackets++
+                token.type == AzoraTokenTypes.R_BRACKET -> brackets = (brackets - 1).coerceAtLeast(0)
+                isOperator(token, "<") -> angles++
+                isOperator(token, ">") -> angles = (angles - 1).coerceAtLeast(0)
+                isOperator(token, ">>") -> angles = (angles - 2).coerceAtLeast(0)
+                token.type == AzoraTokenTypes.L_BRACE && parens == 0 && brackets == 0 && angles == 0 -> {
+                    val close = matchingBrace(tokens, index) ?: tokens.lastIndex
+                    return head..close
+                }
+                token.type == AzoraTokenTypes.WHITE_SPACE && token.text.contains('\n') &&
+                    parens == 0 && brackets == 0 && angles == 0 -> {
+                    val next = nextMeaningful(tokens, index, sameLine = false)
+                    val continuation = next?.let {
+                        tokens[it].type == AzoraTokenTypes.L_BRACE || tokens[it].text == "where"
+                    } == true
+                    if (!continuation) return head..(index - 1).coerceAtLeast(head)
+                }
+                token.type == AzoraTokenTypes.SEMICOLON && parens == 0 && brackets == 0 && angles == 0 ->
+                    return head..index
+            }
+            index++
+        }
+        return head..tokens.lastIndex
+    }
+
+    /** The innermost braced lexical block containing [index]. */
+    private fun enclosingBlock(tokens: List<AzoraToken>, index: Int): IntRange? {
+        val stack = ArrayDeque<Int>()
+        for (cursor in 0..index.coerceAtMost(tokens.lastIndex)) {
+            when (tokens[cursor].type) {
+                AzoraTokenTypes.L_BRACE -> stack.addLast(cursor)
+                AzoraTokenTypes.R_BRACE -> if (stack.isNotEmpty()) stack.removeLast()
+            }
+        }
+        val open = stack.lastOrNull() ?: return null
+        val close = matchingBrace(tokens, open) ?: tokens.lastIndex
+        return open..close
+    }
+
     private fun memberContext(
         index: Int,
         specBodies: List<IntRange>,
@@ -435,35 +565,22 @@ object AzoraSemanticModel {
         else -> MemberContext.NORMAL
     }
 
-    /** Parameters from `(name: Type)` and a `{ self& -> ... }` receiver. */
+    /** Parameters from both `[self: T&, context: C&]` and `(value: T)` lists. */
     private fun parameterDeclarations(
         tokens: List<AzoraToken>,
         function: ScopedDeclaration,
     ): List<ScopedDeclaration> {
         val declarations = mutableListOf<ScopedDeclaration>()
-        val open = function.scope.firstOrNull { tokens[it].type == AzoraTokenTypes.L_PAREN }
-        val close = open?.let { matchingParen(tokens, it, function.scope.last) }
-        if (open != null && close != null) {
-            for (i in (open + 1) until close) {
-                if (tokens[i].type != AzoraTokenTypes.IDENTIFIER) continue
-                val next = nextMeaningful(tokens, i, sameLine = false) ?: continue
-                if (next < close && tokens[next].type == AzoraTokenTypes.COLON) {
-                    declarations.add(ScopedDeclaration(tokens[i].text, i, function.scope))
-                }
-            }
-        }
-
-        val receiverStart = (close ?: function.tokenIndex) + 1
-        for (i in receiverStart..function.scope.last.coerceAtMost(tokens.lastIndex)) {
-            if (tokens[i].type == AzoraTokenTypes.ARROW) break
-            if (tokens[i].type == AzoraTokenTypes.IDENTIFIER && tokens[i].text in IMPLICIT_PARAMETERS) {
+        val signatureEnd = function.scope.firstOrNull { tokens[it].type == AzoraTokenTypes.L_BRACE }
+            ?: function.scope.last
+        for (i in (function.tokenIndex + 1) until signatureEnd.coerceAtMost(tokens.size)) {
+            if (tokens[i].type != AzoraTokenTypes.IDENTIFIER) continue
+            val next = nextMeaningful(tokens, i, sameLine = false) ?: continue
+            if (next < signatureEnd && tokens[next].type == AzoraTokenTypes.COLON) {
                 declarations.add(ScopedDeclaration(tokens[i].text, i, function.scope))
-                break
             }
-            if (i > receiverStart && tokens[i].type == AzoraTokenTypes.L_BRACE) continue
-            if (tokens[i].type == AzoraTokenTypes.R_BRACE) break
         }
-        return declarations
+        return declarations.distinctBy { it.tokenIndex }
     }
 
     /** All identifier segments on an `import` line. */
@@ -471,7 +588,7 @@ object AzoraSemanticModel {
         val result = linkedSetOf<Int>()
         for (i in tokens.indices) {
             if (!AzoraTokenTypes.KEYWORDS.contains(tokens[i].type) ||
-                tokens[i].text !in setOf("import", "use", "module", "mod")) continue
+                tokens[i].text !in setOf("import", "use", "module")) continue
             var cursor = i + 1
             while (cursor < tokens.size) {
                 val token = tokens[cursor]
@@ -489,26 +606,32 @@ object AzoraSemanticModel {
      * implementation only marked the first lowercase segment, leaving
      * `realm ide::editor` half-styled and making `std::math::sqrt` inconsistent.
      */
-    private fun zoneUsageTokens(tokens: List<AzoraToken>): Set<Int> {
+    private fun realmUsageTokens(tokens: List<AzoraToken>): Set<Int> {
         val result = linkedSetOf<Int>()
         for (i in tokens.indices) {
             val token = tokens[i]
             if (token.type != AzoraTokenTypes.IDENTIFIER) continue
             if (isRealmDeclarationSegment(tokens, i)) {
-                addRealmPath(tokens, i, result)
+                addRealmPath(tokens, i, result, includeLast = true)
                 continue
             }
-            val previous = prevMeaningful(tokens, i, sameLine = true)
             val next = nextMeaningful(tokens, i, sameLine = true)
-            if ((previous != null && isOperator(tokens[previous], "::")) ||
-                (next != null && isOperator(tokens[next], "::"))) {
-                addRealmPath(tokens, i, result)
+            // At a use site, only owning realm segments are italic. The final
+            // segment is the actual symbol and keeps its resolved function/type/
+            // value style (`std::reflect`, `std::Int`, `entity::field`).
+            if (next != null && isOperator(tokens[next], "::")) {
+                addRealmPath(tokens, i, result, includeLast = false)
             }
         }
         return result
     }
 
-    private fun addRealmPath(tokens: List<AzoraToken>, index: Int, result: MutableSet<Int>) {
+    private fun addRealmPath(
+        tokens: List<AzoraToken>,
+        index: Int,
+        result: MutableSet<Int>,
+        includeLast: Boolean,
+    ) {
         var first = index
         while (true) {
             val separator = prevMeaningful(tokens, first, sameLine = true)
@@ -517,15 +640,17 @@ object AzoraSemanticModel {
                 tokens[segment].type != AzoraTokenTypes.IDENTIFIER) break
             first = segment
         }
+        val segments = mutableListOf<Int>()
         var cursor = first
         while (cursor < tokens.size) {
-            if (tokens[cursor].type == AzoraTokenTypes.IDENTIFIER) result.add(cursor)
+            if (tokens[cursor].type == AzoraTokenTypes.IDENTIFIER) segments.add(cursor)
             val separator = nextMeaningful(tokens, cursor, sameLine = true) ?: break
             if (!isOperator(tokens[separator], "::")) break
             val segment = nextMeaningful(tokens, separator, sameLine = true) ?: break
             if (tokens[segment].type != AzoraTokenTypes.IDENTIFIER) break
             cursor = segment
         }
+        result.addAll(if (includeLast) segments else segments.dropLast(1))
     }
 
     private fun isRealmDeclarationSegment(tokens: List<AzoraToken>, index: Int): Boolean {
@@ -546,30 +671,12 @@ object AzoraSemanticModel {
         return false
     }
 
-    private fun isZoneDeclarationSegment(tokens: List<AzoraToken>, index: Int): Boolean {
-        var cursor = index - 1
-        while (cursor >= 0) {
-            val token = tokens[cursor]
-            if (AzoraTokenTypes.IGNORABLE.contains(token.type)) {
-                cursor--
-                continue
-            }
-            if (token.text == "zone" && AzoraTokenTypes.KEYWORDS.contains(token.type)) return true
-            if (token.type == AzoraTokenTypes.IDENTIFIER || isOperator(token, "::")) {
-                cursor--
-                continue
-            }
-            return false
-        }
-        return false
-    }
-
     private fun isParameterReference(
         tokens: List<AzoraToken>,
         index: Int,
         parameters: List<ScopedDeclaration>,
     ): Boolean = parameters.any {
-        index != it.tokenIndex && index in it.scope && tokens[index].text == it.name
+        index > it.tokenIndex && index in it.scope && tokens[index].text == it.name
     }
 
     private fun isLocalBindingReference(
@@ -577,7 +684,7 @@ object AzoraSemanticModel {
         index: Int,
         semantics: Semantics,
     ): Boolean = semantics.variables.any {
-        index != it.tokenIndex && index in it.scope && tokens[index].text == it.name
+        index > it.tokenIndex && index in it.scope && tokens[index].text == it.name
     }
 
     /** Applies the website's light-gray styles to declarations with no references. */
@@ -593,9 +700,10 @@ object AzoraSemanticModel {
             addAll(semantics.variables.map { it.tokenIndex })
         }
 
-        fun isUsed(declaration: ScopedDeclaration): Boolean =
+        fun isUsed(declaration: ScopedDeclaration, mustFollowDeclaration: Boolean = false): Boolean =
             declaration.scope.any { index ->
                 index != declaration.tokenIndex &&
+                    (!mustFollowDeclaration || index > declaration.tokenIndex) &&
                     index !in declarationTokens &&
                     tokens[index].type == AzoraTokenTypes.IDENTIFIER &&
                     tokens[index].text == declaration.name
@@ -618,12 +726,12 @@ object AzoraSemanticModel {
             }
         }
         for (declaration in semantics.parameters) {
-            if (!isUsed(declaration)) {
+            if (!isUsed(declaration, mustFollowDeclaration = true)) {
                 result[tokens[declaration.tokenIndex].start] = AzoraSyntaxHighlighter.UNUSED_PARAMETER
             }
         }
         for (declaration in semantics.variables) {
-            if (!isUsed(declaration)) {
+            if (!isUsed(declaration, mustFollowDeclaration = true)) {
                 result[tokens[declaration.tokenIndex].start] = AzoraSyntaxHighlighter.UNUSED
             }
         }

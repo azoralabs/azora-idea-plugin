@@ -84,6 +84,8 @@ class AzoraResolver(
         }
 
         val name = reference.name
+        val fileSymbols = service.getSymbolsForFile(filePath, content)
+        declarationSymbolAt(fileSymbols, name, offset)?.let { return listOf(it) }
         declarationAt(content, offset)?.takeIf { it.name == name }?.let { return listOf(it) }
         localsInScope(content, offset).lastOrNull { it.name == name }?.let { return listOf(it) }
 
@@ -94,7 +96,6 @@ class AzoraResolver(
                 ?.let { return it }
         }
 
-        val fileSymbols = service.getSymbolsForFile(filePath, content)
         preferredCandidates(fileSymbols.filter { it.name == name }, content, offset)
             .takeIf { it.isNotEmpty() }?.let { return it }
         preferredCandidates(findInMembers(fileSymbols, name), content, offset, qualified = true)
@@ -132,7 +133,7 @@ class AzoraResolver(
         offset: Int,
         qualified: Boolean = false,
     ): List<SymbolInfo> {
-        if (candidates.size < 2) return candidates
+        if (candidates.isEmpty()) return emptyList()
         val start = wordStart(content, offset)
         val end = wordEnd(content, start)
         val next = nextNonWhitespace(content, end)
@@ -140,14 +141,25 @@ class AzoraResolver(
         val callable = candidates.filter { it.kind in CALLABLE_KINDS }
         val types = candidates.filter { it.kind in TYPE_KINDS }
         val values = candidates.filter { it.kind in VALUE_KINDS }
+        val annotations = candidates.filter { it.kind == SymbolKind.ANNOT }
+        val macros = candidates.filter { it.kind == SymbolKind.MACRO }
 
+        if (isSigilReference(content, start)) {
+            if (content.substring(start, end).firstOrNull()?.isUpperCase() == true && annotations.isNotEmpty()) return annotations
+            if (macros.isNotEmpty()) return macros
+        }
+        if (isTypeUse(content, start, previous) && types.isNotEmpty()) return types
         if (next == '(') {
             if (callable.isNotEmpty()) return callable
-            if (content.substring(start, end).firstOrNull()?.isUpperCase() == true && types.isNotEmpty()) {
-                return types
-            }
+            if (types.isNotEmpty()) return types
         }
-        if (previous in TYPE_CONTEXT_WORDS && types.isNotEmpty()) return types
+        // Generic call/property syntax (`reflect<T>`, `map<T>(…)`) belongs to
+        // the resolved callable whenever one exists. A generic type remains a
+        // type in a syntactic type context handled above.
+        if (next == '<') {
+            if (callable.isNotEmpty()) return callable
+            if (types.isNotEmpty()) return types
+        }
         if (qualified && values.isNotEmpty()) return values
         return candidates
     }
@@ -220,53 +232,73 @@ class AzoraResolver(
 
     /**
      * Every binding in scope at [offset]: parameters of the enclosing
-     * declaration, `for`/`when` bindings, and `var`/`fin`/`let`/`mem`/`rem`/`ret`
-     * declarations, in source order so the nearest one wins.
+     * declaration, loop bindings, and current `var`/`val`/`fin`/`let`
+     * declarations. A declaration is included only when its lexical brace
+     * scope contains the use site, so a same-named binding in a completed
+     * sibling block cannot steal navigation.
      */
     fun localsInScope(content: String, offset: Int): List<SymbolInfo> {
-        val before = content.take(offset.coerceIn(0, content.length))
+        val caret = offset.coerceIn(0, content.length)
+        val code = codeOnly(content)
+        val blocks = sourceBlocks(code)
         val result = mutableListOf<SymbolInfo>()
 
-        for (match in BINDING.findAll(before)) {
+        for (match in BINDING.findAll(code)) {
+            val nameOffset = match.groups[2]!!.range.first
+            if (nameOffset >= caret || !scopeContains(blocks, nameOffset, caret)) continue
             val keyword = match.groupValues[1]
             val declaredType = match.groupValues[3].trim().takeIf { it.isNotEmpty() }
-            val initializer = match.groupValues[4].trim()
+            // The scope scanner masks literals to preserve brace structure.
+            // Read the initializer back from the original source so
+            // `fin label = "hello"` still infers `String`.
+            val initializer = match.groups[4]?.range
+                ?.let { content.substring(it.first, it.last + 1) }
+                ?.trim().orEmpty()
             val kind = if (keyword in MUTABLE_BINDINGS) SymbolKind.VAR else SymbolKind.FIN
             result.add(
                 SymbolInfo(
                     name = match.groupValues[2],
                     kind = kind,
                     type = declaredType ?: inferLiteralType(initializer),
-                    line = lineOf(content, match.groups[2]!!.range.first),
-                    offset = match.groups[2]!!.range.first,
+                    line = lineOf(content, nameOffset),
+                    offset = nameOffset,
                     isMutable = kind == SymbolKind.VAR,
                     defaultValueText = initializer.takeIf { it.isNotEmpty() },
                 )
             )
         }
 
-        for (match in FOR_BINDING.findAll(before)) {
+        for (match in FOR_BINDING.findAll(code)) {
+            val nameOffset = match.groups[1]!!.range.first
+            if (nameOffset >= caret) continue
+            val bodyOpen = code.indexOf('{', match.range.last + 1)
+            val body = bodyOpen.takeIf { it >= 0 }?.let { open -> blocks.firstOrNull { it.open == open } }
+            if (body == null || caret !in (body.open + 1)..body.close) continue
             result.add(
                 SymbolInfo(
                     name = match.groupValues[1],
                     kind = SymbolKind.FIN,
-                    line = lineOf(content, match.groups[1]!!.range.first),
-                    offset = match.groups[1]!!.range.first,
+                    line = lineOf(content, nameOffset),
+                    offset = nameOffset,
                 )
             )
         }
 
-        SIGNATURE.findAll(before).lastOrNull()?.let { signature ->
-            result.addAll(parameterSymbols(signature, content))
+        for (signature in callableSignatures(code)) {
+            if (caret in signature.scopeStart..signature.scopeEnd || caret in signature.headerStart..signature.headerEnd) {
+                result.addAll(parameterSymbols(signature, content))
+                result.addAll(typeParameterSymbols(signature, content))
+            }
         }
 
-        return result
+        return result.distinctBy { Triple(it.offset, it.name, it.kind) }.sortedBy { it.offset }
     }
 
     /** Returns a local/parameter declaration when the caret is on its symbol. */
     private fun declarationAt(content: String, offset: Int): SymbolInfo? {
         val caret = offset.coerceIn(0, content.length)
-        BINDING.findAll(content).firstOrNull { match ->
+        val code = codeOnly(content)
+        BINDING.findAll(code).firstOrNull { match ->
             match.groups[2]?.range?.contains(caret) == true
         }?.let { match ->
             val keyword = match.groupValues[1]
@@ -276,58 +308,71 @@ class AzoraResolver(
                 name = match.groupValues[2],
                 kind = kind,
                 type = match.groupValues[3].trim().takeIf { it.isNotEmpty() }
-                    ?: inferLiteralType(match.groupValues[4]),
+                    ?: match.groups[4]?.range
+                        ?.let { content.substring(it.first, it.last + 1) }
+                        ?.let(::inferLiteralType),
                 line = lineOf(content, nameOffset),
                 offset = nameOffset,
                 isMutable = kind == SymbolKind.VAR,
             )
         }
-        FOR_BINDING.findAll(content).firstOrNull { match ->
+        FOR_BINDING.findAll(code).firstOrNull { match ->
             match.groups[1]?.range?.contains(caret) == true
         }?.let { match ->
             val nameOffset = match.groups[1]!!.range.first
             return SymbolInfo(match.groupValues[1], SymbolKind.FIN, line = lineOf(content, nameOffset), offset = nameOffset)
         }
-        SIGNATURE.findAll(content).forEach { signature ->
-            parameterSymbols(signature, content).firstOrNull { caret in it.offset until (it.offset + it.name.length) }
+        callableSignatures(code).forEach { signature ->
+            (parameterSymbols(signature, content) + typeParameterSymbols(signature, content))
+                .firstOrNull { caret in it.offset until (it.offset + it.name.length) }
                 ?.let { return it }
         }
         return null
     }
 
-    /** Extracts parameter symbols with source offsets from a matched signature. */
-    private fun parameterSymbols(signature: MatchResult, content: String): List<SymbolInfo> {
-        val text = signature.value
-        val open = text.indexOf('(')
-        val close = text.lastIndexOf(')')
-        if (open < 0 || close <= open) return emptyList()
-        val body = text.substring(open + 1, close)
-        var rawOffset = 0
-        return body.split(',').mapNotNull { raw ->
-            val leading = raw.indexOfFirst { !it.isWhitespace() }
-            if (leading < 0) {
-                rawOffset += raw.length + 1
-                return@mapNotNull null
-            }
-            val part = raw.substring(leading)
-            val name = part.substringBefore(':').substringBefore('=').trim().trimStart('&', '!')
-            if (name.isEmpty() || !name.first().let { it.isLetter() || it == '_' }) {
-                rawOffset += raw.length + 1
-                return@mapNotNull null
-            }
-            val nameInPart = part.indexOf(name)
-            val nameOffset = signature.range.first + open + 1 + rawOffset + leading + nameInPart
-            val type = part.substringAfter(':', "").substringBefore('=').trim().takeIf { it.isNotEmpty() }
-            rawOffset += raw.length + 1
-            SymbolInfo(name, SymbolKind.PARAM, type = type, line = lineOf(content, nameOffset), offset = nameOffset)
+    /** Extracts value parameters with their exact source offsets. */
+    private fun parameterSymbols(signature: CallableSignature, content: String): List<SymbolInfo> {
+        return parameterRanges(signature).flatMap { (open, close) ->
+            val body = content.substring(open + 1, close)
+            PARAMETER_NAME.findAll(body).map { match ->
+                val name = match.groupValues[1]
+                val nameOffset = open + 1 + match.groups[1]!!.range.first
+                val partEnd = topLevelParameterEnd(body, match.range.last + 1)
+                // PARAMETER_NAME consumes the separating colon, so `part`
+                // already begins with the type. Looking for another `:` made
+                // every ordinary and contextual-receiver parameter untyped.
+                val part = body.substring(match.range.last + 1, partEnd)
+                val type = part.substringBefore('=').trim()
+                    .removePrefix("return ").trimStart().takeIf { it.isNotEmpty() }
+                SymbolInfo(name, SymbolKind.PARAM, type = type, line = lineOf(content, nameOffset), offset = nameOffset)
+            }.toList()
         }
+    }
+
+    /** Generic parameters share the callable's lexical scope but are type symbols. */
+    private fun typeParameterSymbols(signature: CallableSignature, content: String): List<SymbolInfo> {
+        val open = signature.genericsOpen ?: return emptyList()
+        val close = signature.genericsClose ?: return emptyList()
+        val body = content.substring(open + 1, close)
+        return GENERIC_PARAMETER.findAll(body).map { match ->
+            val name = match.groupValues[1]
+            val nameOffset = open + 1 + match.groups[1]!!.range.first
+            SymbolInfo(name, SymbolKind.PARAM, type = "type parameter", line = lineOf(content, nameOffset), offset = nameOffset)
+        }.toList()
     }
 
     /** The type `self` refers to at [offset], from the enclosing `impl` or `pack`. */
     fun selfType(content: String, offset: Int): String? {
-        val before = content.take(offset.coerceIn(0, content.length))
-        IMPL_HEAD.findAll(before).lastOrNull()?.let { return it.groupValues[1] }
-        return TYPE_HEAD.findAll(before).lastOrNull()?.groupValues?.get(2)
+        val caret = offset.coerceIn(0, content.length)
+        val code = codeOnly(content)
+        val blocks = sourceBlocks(code)
+        val candidates = IMPL_LINE.findAll(code).mapNotNull { match ->
+            val open = code.indexOf('{', match.range.last + 1)
+            val block = blocks.firstOrNull { it.open == open } ?: return@mapNotNull null
+            if (caret !in (block.open + 1)..block.close) return@mapNotNull null
+            implTarget(match.value)?.let { Triple(match.range.first, block.depth, it) }
+        }.toList()
+        return candidates.maxWithOrNull(compareBy<Triple<Int, Int, String>> { it.second }.thenBy { it.first })?.third
     }
 
     /** The module paths this file imports, plus their short aliases. */
@@ -364,8 +409,16 @@ class AzoraResolver(
         while (start > 0 && isNameChar(content[start - 1])) start--
         var end = caret
         while (end < content.length && isNameChar(content[end])) end++
-        val name = content.substring(start, end)
+        var name = content.substring(start, end)
         if (name.isEmpty()) return null
+        // In a short interpolation (`"hello $name"`) the `$` is syntax, not
+        // part of the referenced symbol. Keeping it in the reference made
+        // hover/go-to and unused-variable analysis miss an otherwise ordinary
+        // local binding.
+        if (name.length > 1 && name.startsWith('$')) {
+            start++
+            name = name.drop(1)
+        }
 
         val (qualifier, separator) = qualifierBefore(content, start)
         return AzoraReference(name, qualifier, separator)
@@ -414,6 +467,39 @@ class AzoraResolver(
         return found
     }
 
+    /** Finds the declaration token itself, including nested fields/members. */
+    private fun declarationSymbolAt(symbols: List<SymbolInfo>, name: String, offset: Int): SymbolInfo? {
+        fun visit(items: List<SymbolInfo>): SymbolInfo? {
+            for (symbol in items) {
+                val sourceName = symbol.name.substringAfterLast("::").substringAfterLast('.')
+                if ((symbol.name == name || sourceName == name) &&
+                    offset in symbol.offset until (symbol.offset + sourceName.length)
+                ) return symbol
+                visit(symbol.members)?.let { return it }
+            }
+            return null
+        }
+        return visit(symbols)
+    }
+
+    private fun isSigilReference(content: String, start: Int): Boolean {
+        val lineStart = content.lastIndexOf('\n', start - 1) + 1
+        val prefix = content.substring(lineStart, start)
+        return SIGIL_PATH_SUFFIX.containsMatchIn(prefix)
+    }
+
+    private fun isTypeUse(content: String, start: Int, previousWord: String?): Boolean {
+        var previous = start - 1
+        while (previous >= 0 && content[previous].isWhitespace()) previous--
+        if (previous >= 0) {
+            when (content[previous]) {
+                ':' -> if (previous == 0 || content.getOrNull(previous - 1) != ':') return true
+                '<', ',' -> return true
+            }
+        }
+        return previousWord in TYPE_CONTEXT_WORDS
+    }
+
     private fun wordStart(content: String, offset: Int): Int {
         var start = offset.coerceIn(0, content.length)
         while (start > 0 && isNameChar(content[start - 1])) start--
@@ -444,21 +530,198 @@ class AzoraResolver(
         return content.substring(index + 1, end)
     }
 
-    /** The parameter list of the declaration enclosing the caret, if any. */
-    private fun enclosingSignature(before: String): String? =
-        SIGNATURE.findAll(before).lastOrNull()?.value
+    private data class SourceBlock(val open: Int, val close: Int, val depth: Int)
 
-    private fun parametersOf(signature: String): List<Pair<String, String?>> {
-        val inner = signature.substringAfter('(', "").substringBeforeLast(')', "")
-        if (inner.isBlank()) return emptyList()
-        return inner.split(',').mapNotNull { raw ->
-            val part = raw.trim()
-            if (part.isEmpty()) return@mapNotNull null
-            val name = part.substringBefore(':').substringBefore('=').trim().trimStart('&', '!')
-            if (name.isEmpty() || !name.first().let { it.isLetter() || it == '_' }) return@mapNotNull null
-            val type = part.substringAfter(':', "").substringBefore('=').trim().takeIf { it.isNotEmpty() }
-            name to type
+    private data class CallableSignature(
+        val headerStart: Int,
+        val headerEnd: Int,
+        val paramsOpen: Int,
+        val paramsClose: Int,
+        val receiverOpen: Int?,
+        val receiverClose: Int?,
+        val genericsOpen: Int?,
+        val genericsClose: Int?,
+        val scopeStart: Int,
+        val scopeEnd: Int,
+    )
+
+    /** Masks literals/comments without changing offsets, so regexes only see code. */
+    private fun codeOnly(source: String): String {
+        val masked = source.toCharArray()
+        var index = 0
+        var blockDepth = 0
+        fun blank(at: Int) {
+            if (masked[at] != '\n' && masked[at] != '\r') masked[at] = ' '
         }
+        while (index < source.length) {
+            when {
+                blockDepth > 0 -> when {
+                    source.startsWith("/*", index) -> {
+                        blank(index); blank(index + 1); index += 2; blockDepth++
+                    }
+                    source.startsWith("*/", index) -> {
+                        blank(index); blank(index + 1); index += 2; blockDepth--
+                    }
+                    else -> blank(index++)
+                }
+                source.startsWith("//", index) -> {
+                    while (index < source.length && source[index] != '\n') blank(index++)
+                }
+                source.startsWith("/*", index) -> {
+                    blank(index); blank(index + 1); index += 2; blockDepth = 1
+                }
+                source.startsWith("\"\"\"", index) -> {
+                    repeat(3) { blank(index++) }
+                    while (index < source.length && !source.startsWith("\"\"\"", index)) blank(index++)
+                    repeat(minOf(3, source.length - index)) { blank(index++) }
+                }
+                source[index] == '"' || source[index] == '\'' -> {
+                    val quote = source[index]
+                    blank(index++)
+                    while (index < source.length) {
+                        val char = source[index]
+                        blank(index++)
+                        if (char == '\\' && index < source.length) blank(index++)
+                        else if (char == quote) break
+                    }
+                }
+                else -> index++
+            }
+        }
+        return masked.concatToString()
+    }
+
+    private fun sourceBlocks(code: String): List<SourceBlock> {
+        val stack = ArrayDeque<Pair<Int, Int>>()
+        val blocks = mutableListOf<SourceBlock>()
+        for (index in code.indices) {
+            when (code[index]) {
+                '{' -> stack.addLast(index to stack.size)
+                '}' -> stack.removeLastOrNull()?.let { (open, depth) -> blocks += SourceBlock(open, index, depth) }
+            }
+        }
+        // A half-typed file still has a useful scope through EOF.
+        while (stack.isNotEmpty()) {
+            val (open, depth) = stack.removeLast()
+            blocks += SourceBlock(open, code.length, depth)
+        }
+        return blocks.sortedBy { it.open }
+    }
+
+    private fun containingBlock(blocks: List<SourceBlock>, position: Int): SourceBlock? =
+        blocks.filter { position in (it.open + 1)..it.close }
+            .maxWithOrNull(compareBy<SourceBlock> { it.depth }.thenBy { it.open })
+
+    private fun scopeContains(blocks: List<SourceBlock>, declaration: Int, use: Int): Boolean {
+        val scope = containingBlock(blocks, declaration) ?: return true
+        return use in (scope.open + 1)..scope.close
+    }
+
+    /** Current callable headers, including bracketed contextual receivers. */
+    private fun callableSignatures(code: String): List<CallableSignature> {
+        val blocks = sourceBlocks(code)
+        data class Head(
+            val start: Int,
+            val end: Int,
+            val paramsOpen: Int,
+            val paramsClose: Int,
+            val receiverOpen: Int?,
+            val receiverClose: Int?,
+            val genericsOpen: Int?,
+            val genericsClose: Int?,
+            val owner: SourceBlock?,
+        )
+
+        val heads = CALLABLE_HEAD.findAll(code).mapNotNull { match ->
+            var cursor = match.range.last + 1
+            while (code.getOrNull(cursor)?.isWhitespace() == true) cursor++
+            var genericOpen: Int? = null
+            var genericClose: Int? = null
+            if (code.getOrNull(cursor) == '<') {
+                genericOpen = cursor
+                genericClose = matching(code, cursor, '<', '>') ?: return@mapNotNull null
+                cursor = genericClose + 1
+                while (code.getOrNull(cursor)?.isWhitespace() == true) cursor++
+            }
+            var receiverOpen: Int? = null
+            var receiverClose: Int? = null
+            if (code.getOrNull(cursor) == '[') {
+                receiverOpen = cursor
+                receiverClose = matching(code, cursor, '[', ']') ?: return@mapNotNull null
+                cursor = receiverClose + 1
+                while (code.getOrNull(cursor)?.isWhitespace() == true) cursor++
+            }
+            if (code.getOrNull(cursor) != '(') return@mapNotNull null
+            val paramsClose = matching(code, cursor, '(', ')') ?: return@mapNotNull null
+            Head(
+                match.range.first, paramsClose, cursor, paramsClose,
+                receiverOpen, receiverClose, genericOpen, genericClose,
+                containingBlock(blocks, match.range.first),
+            )
+        }.toList()
+
+        return heads.mapIndexed { index, head ->
+            val next = heads.drop(index + 1).firstOrNull { it.owner?.open == head.owner?.open }?.start
+            val limit = minOf(next ?: Int.MAX_VALUE, head.owner?.close ?: code.length)
+            val bodies = blocks.filter { block ->
+                block.open > head.paramsClose && block.open < limit && block.depth == (head.owner?.depth?.plus(1) ?: 0)
+            }
+            val scopeEnd = bodies.maxOfOrNull { it.close }
+                ?: code.indexOf('\n', head.paramsClose).takeIf { it >= 0 }
+                ?: head.paramsClose
+            CallableSignature(
+                head.start, head.end, head.paramsOpen, head.paramsClose,
+                head.receiverOpen, head.receiverClose, head.genericsOpen, head.genericsClose,
+                head.start, scopeEnd,
+            )
+        }
+    }
+
+    private fun parameterRanges(signature: CallableSignature): List<Pair<Int, Int>> = buildList {
+        signature.receiverOpen?.let { open -> add(open to (signature.receiverClose ?: open)) }
+        add(signature.paramsOpen to signature.paramsClose)
+    }
+
+    private fun matching(text: String, open: Int, opener: Char, closer: Char): Int? {
+        var depth = 0
+        for (index in open until text.length) {
+            when (text[index]) {
+                opener -> depth++
+                closer -> if (--depth == 0) return index
+            }
+        }
+        return null
+    }
+
+    /** End of one parameter, respecting nested function/generic types. */
+    private fun topLevelParameterEnd(parameters: String, from: Int): Int {
+        var paren = 0
+        var angle = 0
+        var bracket = 0
+        for (index in from until parameters.length) {
+            when (parameters[index]) {
+                '(' -> paren++
+                ')' -> paren = (paren - 1).coerceAtLeast(0)
+                '<' -> angle++
+                '>' -> angle = (angle - 1).coerceAtLeast(0)
+                '[' -> bracket++
+                ']' -> bracket = (bracket - 1).coerceAtLeast(0)
+                ',', '\n' -> if (paren == 0 && angle == 0 && bracket == 0) return index
+            }
+        }
+        return parameters.length
+    }
+
+    private fun implTarget(header: String): String? {
+        var text = header.substringAfter("impl", "").trimStart()
+        if (text.startsWith("<")) {
+            val close = matching(text, 0, '<', '>') ?: return null
+            text = text.substring(close + 1).trimStart()
+        }
+        text = text.removePrefix("pack ").trimStart()
+        val target = if (" for " in text) text.substringAfter(" for ") else text
+        return target.trimStart().takeWhile { it.isLetterOrDigit() || it == '_' || it == '$' }
+            .takeIf { it.isNotEmpty() }
     }
 
     private fun inferLiteralType(initializer: String): String? {
@@ -479,7 +742,7 @@ class AzoraResolver(
         .substringBefore('<')
         .substringBefore('?')
         .trim()
-        .trimStart('&', '!')
+        .trim('&', '!')
         .substringAfterLast("::")
         .substringAfterLast('.')
         .trim()
@@ -490,7 +753,7 @@ class AzoraResolver(
         text.take(offset).count { it == '\n' } + 1
 
     private companion object {
-        val MUTABLE_BINDINGS = setOf("var", "val", "mem", "rem")
+        val MUTABLE_BINDINGS = setOf("var")
 
         val CALLABLE_KINDS = setOf(
             SymbolKind.FUNC, SymbolKind.METHOD, SymbolKind.TASK, SymbolKind.FLOW,
@@ -505,19 +768,25 @@ class AzoraResolver(
             SymbolKind.FIELD, SymbolKind.PROPERTY, SymbolKind.VAR, SymbolKind.FIN,
             SymbolKind.PARAM, SymbolKind.VARIANT,
         )
-        val TYPE_CONTEXT_WORDS = setOf(":", "is", "as", "->", "<", ",")
+        val TYPE_CONTEXT_WORDS = setOf(
+            ":", "is", "as", "->", "derives", "requires", "binds", "impl", "typealias",
+        )
 
         val BINDING = Regex(
-            """\b(var|val|fin|let|mem|rem|ret)\s+([A-Za-z_$][\w$]*)(?:\s*:\s*([^=\n{]+))?(?:\s*=\s*([^\n]+))?"""
+            """\b(var|val|fin|let)[ \t]+([A-Za-z_$][\w$]*)(?:[ \t]*:[ \t]*([^=\n{]+))?(?:[ \t]*=[ \t]*([^\n]+))?"""
         )
         val FOR_BINDING = Regex("""\bfor\s+([A-Za-z_$][\w$]*)\s+in\b""")
-        val SIGNATURE = Regex("""(?m)^\s*(?:\w+\s+)*(?:func|task|flow|ctor|oper|deco)[^(\n]*\([^)]*\)""")
-        val IMPL_HEAD = Regex(
-            """(?m)^\s*(?:\w+\s+)*impl(?:\s*<[^>]*>)?(?:\s+[A-Za-z_][\w<>,:\s]*?\s+for)?\s+([A-Z][\w]*)"""
+        val CALLABLE_HEAD = Regex(
+            """(?m)^[ \t]*(?:(?:exposed|protected|confined|inline|deepinline|noinline|unsafe|threadlocal|react|async|bridge)\s+)*(?:func\s+[A-Za-z_$][\w$]*|ctor\b|oper[^\s\[(]*)""",
         )
-        val TYPE_HEAD = Regex("""(?m)^\s*(?:\w+\s+)*(pack|solo|enum|slot|fail|spec)\s+([A-Z][\w]*)""")
-        val IMPORT = Regex("""(?m)^\s*(?:export\s+)?(?:import|use)\s+([^\n/]+)""")
+        val PARAMETER_NAME = Regex("""(?m)(?:^|,|\n)\s*(?:\.\.\.)?([A-Za-z_$][\w$]*)\s*:""")
+        val GENERIC_PARAMETER = Regex("""(?:^|,)\s*(?:\.\.\.)?(?:out\s+)?([A-Za-z_$][\w$]*)""")
+        val IMPL_LINE = Regex(
+            """(?m)^[ \t]*(?:(?:bridge|exposed|protected|confined|unsafe)\s+)*impl\b[^\n{]*""",
+        )
+        val IMPORT = Regex("""(?m)^\s*(?:exposed\s+)?(?:import|use)\s+([^\n/]+)""")
         val GROUPED_IMPORT = Regex("""^([\w.]+)\.\{([^}]*)}""")
         val CONSTRUCTOR = Regex("""^([A-Z][\w]*)\s*(?:<[^>]+>)?\s*\(""")
+        val SIGIL_PATH_SUFFIX = Regex("""@(?:[A-Za-z_$][\w$]*::)*\s*$""")
     }
 }

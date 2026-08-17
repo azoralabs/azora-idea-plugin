@@ -23,10 +23,12 @@ dependencies {
         } else {
             intellijIdeaCommunity("2025.1")
         }
+        testFramework(org.jetbrains.intellij.platform.gradle.TestFrameworkType.Bundled)
     }
     testImplementation("org.junit.jupiter:junit-jupiter:5.11.4")
+    testImplementation("junit:junit:4.13.2")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
-    testRuntimeOnly("junit:junit:4.13.2")
+    testRuntimeOnly("org.junit.vintage:junit-vintage-engine:5.11.4")
 }
 
 kotlin {
@@ -46,12 +48,12 @@ intellijPlatform {
         }
         changeNotes = """
             <ul>
-                <li>Updated lexical and contextual highlighting for the current Azora vocabulary, including realms, variants, annotations, graphs, ownership, reactive, and clause keywords.</li>
-                <li>Realm-qualified paths such as <code>ide::editor</code> now receive one consistent semantic style across every segment.</li>
-                <li>Stdlib and dependency modules are indexed from both current <code>module</code>/<code>realm</code> sources and legacy <code>mod</code>/<code>zone</code> SDK sources.</li>
-                <li>Go-to-declaration now resolves the symbol at the use site, respecting local shadowing, member receivers, types, callables, imports, and external source locations.</li>
-                <li>Fixed navigation targets for local bindings and parameters, including exact declaration offsets.</li>
-                <li>Generic type parameters are scoped to their declaring function or type instead of coloring unrelated same-named identifiers.</li>
+                <li>Synchronized reserved and contextual words with the compiler, including contextual <code>assoc</code>/<code>derives</code>, reserved <code>without</code>, and treating <code>reflect</code> as a function.</li>
+                <li>Corrected semantic colors: annotations are yellow, generic parameters orange, loop labels blue, functions use the normal foreground, and complete realm paths are italic.</li>
+                <li>Rebuilt go-to-declaration and hover around symbol identity and use-site role, with lexical shadowing, receiver members, exact declaration offsets, documentation, stdlib, and path dependencies.</li>
+                <li>Fixed exact-prefix completion so <code>Anchor</code> no longer completes as an unrelated suffix type such as <code>TilemapAnchor</code>.</li>
+                <li>Added unused-local warnings and precise diagnostics with quick fixes for Azora naming, constructor/enum shorthand, floating-point literals, imports, annotations, strings, and brackets.</li>
+                <li>Added automatic indentation, code-style settings, and Reformat Code support for nested comma-free <code>.azon</code> objects and arrays; updated Azora indentation, structure view, run markers, project scaffolds, snippets, and live templates to current syntax.</li>
             </ul>
         """.trimIndent()
     }

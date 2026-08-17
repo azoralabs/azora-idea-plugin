@@ -26,25 +26,29 @@ class AzoraCodeStyleSettingsProvider : LanguageCodeStyleSettingsProvider() {
     override fun getLanguage(): Language = AzoraLanguage
 
     override fun getCodeSample(settingsType: SettingsType): String = """
-        use std.{math, container}
+        import std.math
 
         pack Point {
-            fin x: Real
-            fin y: Real
+            fin x: std::Double
+            fin y: std::Double
         }
 
-        func clamp(x: Int, lo: Int, hi: Int): Int
+        func clamp(
+            x: std::Int
+            lo: std::Int
+            hi: std::Int
+        ): std::Int
         in {
             assert lo <= hi { "lo must be <= hi" }
         } out { r ->
             assert r >= lo { "result must be >= lo" }
-        } zone {
+        } scope {
             if x < lo { return lo }
             if x > hi { return hi }
             return x
         }
 
-        task main() {
+        async func main() {
             fin value = await loadValue()
             println(value)
         }

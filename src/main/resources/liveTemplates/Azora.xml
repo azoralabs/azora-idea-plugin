@@ -1,292 +1,99 @@
 <templateSet group="Azora">
-
-  <!-- ── Declarations ─────────────────────────────────────────────── -->
-
-  <template name="func" value="func $NAME$($PARAMS$): $RETURN$ {&#10;    $END$&#10;}"
-            description="Function declaration" toReformat="true" toShortenFQNames="false">
+  <template name="func" value="func $NAME$($PARAMS$): $RETURN$ {&#10;    $END$&#10;}" description="Function declaration" toReformat="true" toShortenFQNames="false">
     <variable name="NAME" expression="" defaultValue="&quot;name&quot;" alwaysStopAt="true"/>
     <variable name="PARAMS" expression="" defaultValue="" alwaysStopAt="true"/>
     <variable name="RETURN" expression="" defaultValue="&quot;Unit&quot;" alwaysStopAt="true"/>
     <context><option name="AZORA" value="true"/></context>
   </template>
-
-  <template name="task" value="task $NAME$($PARAMS$): $RETURN$ {&#10;    $END$&#10;}"
-            description="Asynchronous function" toReformat="true" toShortenFQNames="false">
+  <template name="asyncfunc" value="async func $NAME$($PARAMS$): $RETURN$ {&#10;    $END$&#10;}" description="Asynchronous function" toReformat="true" toShortenFQNames="false">
     <variable name="NAME" expression="" defaultValue="&quot;name&quot;" alwaysStopAt="true"/>
     <variable name="PARAMS" expression="" defaultValue="" alwaysStopAt="true"/>
     <variable name="RETURN" expression="" defaultValue="&quot;Unit&quot;" alwaysStopAt="true"/>
     <context><option name="AZORA" value="true"/></context>
   </template>
-
-  <template name="flow" value="flow $NAME$(): $TYPE$ {&#10;    yield $END$&#10;}"
-            description="Generator" toReformat="true" toShortenFQNames="false">
+  <template name="reactfunc" value="react func $NAME$($PARAMS$): $RETURN$ {&#10;    remember var $STATE$ = $VALUE$&#10;    $END$&#10;}" description="Reactive function" toReformat="true" toShortenFQNames="false">
     <variable name="NAME" expression="" defaultValue="&quot;name&quot;" alwaysStopAt="true"/>
-    <variable name="TYPE" expression="" defaultValue="&quot;Int&quot;" alwaysStopAt="true"/>
-    <context><option name="AZORA" value="true"/></context>
-  </template>
-
-  <template name="main" value="func main() {&#10;    $END$&#10;}"
-            description="Entry point" toReformat="true" toShortenFQNames="false">
-    <context><option name="AZORA" value="true"/></context>
-  </template>
-
-  <template name="taskmain" value="task main() {&#10;    $END$&#10;}"
-            description="Asynchronous entry point" toReformat="true" toShortenFQNames="false">
-    <context><option name="AZORA" value="true"/></context>
-  </template>
-
-  <template name="pack" value="pack $NAME$ {&#10;    var $FIELD$: $TYPE$&#10;    $END$&#10;}"
-            description="Product type" toReformat="true" toShortenFQNames="false">
-    <variable name="NAME" expression="" defaultValue="&quot;Name&quot;" alwaysStopAt="true"/>
-    <variable name="FIELD" expression="" defaultValue="&quot;field&quot;" alwaysStopAt="true"/>
-    <variable name="TYPE" expression="" defaultValue="&quot;Int&quot;" alwaysStopAt="true"/>
-    <context><option name="AZORA" value="true"/></context>
-  </template>
-
-  <template name="enum" value="enum $NAME$ {&#10;    $VARIANTS$&#10;}"
-            description="Enumeration" toReformat="true" toShortenFQNames="false">
-    <variable name="NAME" expression="" defaultValue="&quot;Name&quot;" alwaysStopAt="true"/>
-    <variable name="VARIANTS" expression="" defaultValue="&quot;First, Second&quot;" alwaysStopAt="true"/>
-    <context><option name="AZORA" value="true"/></context>
-  </template>
-
-  <template name="slot" value="slot $NAME$ {&#10;    $VARIANT$($FIELD$: $TYPE$)$END$&#10;}"
-            description="Tagged union" toReformat="true" toShortenFQNames="false">
-    <variable name="NAME" expression="" defaultValue="&quot;Name&quot;" alwaysStopAt="true"/>
-    <variable name="VARIANT" expression="" defaultValue="&quot;First&quot;" alwaysStopAt="true"/>
-    <variable name="FIELD" expression="" defaultValue="&quot;value&quot;" alwaysStopAt="true"/>
-    <variable name="TYPE" expression="" defaultValue="&quot;Int&quot;" alwaysStopAt="true"/>
-    <context><option name="AZORA" value="true"/></context>
-  </template>
-
-  <template name="fail" value="fail $NAME$ {&#10;    $VARIANTS$&#10;}"
-            description="Error set" toReformat="true" toShortenFQNames="false">
-    <variable name="NAME" expression="" defaultValue="&quot;Error&quot;" alwaysStopAt="true"/>
-    <variable name="VARIANTS" expression="" defaultValue="&quot;NotFound&quot;" alwaysStopAt="true"/>
-    <context><option name="AZORA" value="true"/></context>
-  </template>
-
-  <template name="spec" value="spec $NAME$ {&#10;    func $METHOD$(): $RETURN$&#10;    $END$&#10;}"
-            description="Specification" toReformat="true" toShortenFQNames="false">
-    <variable name="NAME" expression="" defaultValue="&quot;Name&quot;" alwaysStopAt="true"/>
-    <variable name="METHOD" expression="" defaultValue="&quot;method&quot;" alwaysStopAt="true"/>
+    <variable name="PARAMS" expression="" defaultValue="" alwaysStopAt="true"/>
     <variable name="RETURN" expression="" defaultValue="&quot;Unit&quot;" alwaysStopAt="true"/>
-    <context><option name="AZORA" value="true"/></context>
-  </template>
-
-  <template name="impl" value="impl $TYPE$ {&#10;    $END$&#10;}"
-            description="Implementation block" toReformat="true" toShortenFQNames="false">
-    <variable name="TYPE" expression="" defaultValue="&quot;TypeName&quot;" alwaysStopAt="true"/>
-    <context><option name="AZORA" value="true"/></context>
-  </template>
-
-  <template name="implfor" value="impl $SPEC$ for $TYPE$ {&#10;    $END$&#10;}"
-            description="Spec implementation" toReformat="true" toShortenFQNames="false">
-    <variable name="SPEC" expression="" defaultValue="&quot;SpecName&quot;" alwaysStopAt="true"/>
-    <variable name="TYPE" expression="" defaultValue="&quot;TypeName&quot;" alwaysStopAt="true"/>
-    <context><option name="AZORA" value="true"/></context>
-  </template>
-
-  <template name="solo" value="solo $NAME$ {&#10;    fin $FIELD$: $TYPE$ = $VALUE$&#10;    $END$&#10;}"
-            description="Singleton" toReformat="true" toShortenFQNames="false">
-    <variable name="NAME" expression="" defaultValue="&quot;Name&quot;" alwaysStopAt="true"/>
-    <variable name="FIELD" expression="" defaultValue="&quot;field&quot;" alwaysStopAt="true"/>
-    <variable name="TYPE" expression="" defaultValue="&quot;String&quot;" alwaysStopAt="true"/>
-    <variable name="VALUE" expression="" defaultValue="&quot;&quot;&quot;&quot;" alwaysStopAt="true"/>
-    <context><option name="AZORA" value="true"/></context>
-  </template>
-
-  <template name="wrap" value="wrap $NAME$ {&#10;    bind $SERVICE$ = $IMPL$()&#10;    $END$&#10;}"
-            description="Dependency-injection container" toReformat="true" toShortenFQNames="false">
-    <variable name="NAME" expression="" defaultValue="&quot;Module&quot;" alwaysStopAt="true"/>
-    <variable name="SERVICE" expression="" defaultValue="&quot;Service&quot;" alwaysStopAt="true"/>
-    <variable name="IMPL" expression="" defaultValue="&quot;ServiceImpl&quot;" alwaysStopAt="true"/>
-    <context><option name="AZORA" value="true"/></context>
-  </template>
-
-  <template name="ctor" value="ctor($PARAM$: $TYPE$) {&#10;    self.$FIELD$ = $PARAM$&#10;    $END$&#10;}"
-            description="Constructor" toReformat="true" toShortenFQNames="false">
-    <variable name="PARAM" expression="" defaultValue="&quot;value&quot;" alwaysStopAt="true"/>
-    <variable name="TYPE" expression="" defaultValue="&quot;Int&quot;" alwaysStopAt="true"/>
-    <variable name="FIELD" expression="" defaultValue="&quot;field&quot;" alwaysStopAt="true"/>
-    <context><option name="AZORA" value="true"/></context>
-  </template>
-
-  <template name="prop" value="prop $NAME$: $TYPE$ = $VALUE$$END$"
-            description="Computed property" toReformat="true" toShortenFQNames="false">
-    <variable name="NAME" expression="" defaultValue="&quot;name&quot;" alwaysStopAt="true"/>
-    <variable name="TYPE" expression="" defaultValue="&quot;Int&quot;" alwaysStopAt="true"/>
+    <variable name="STATE" expression="" defaultValue="&quot;state&quot;" alwaysStopAt="true"/>
     <variable name="VALUE" expression="" defaultValue="&quot;0&quot;" alwaysStopAt="true"/>
     <context><option name="AZORA" value="true"/></context>
   </template>
-
-  <template name="oper" value="oper$OP$(other: $TYPE$): $TYPE$ {&#10;    $END$&#10;}"
-            description="Operator overload" toReformat="true" toShortenFQNames="false">
-    <variable name="OP" expression="" defaultValue="&quot;+&quot;" alwaysStopAt="true"/>
-    <variable name="TYPE" expression="" defaultValue="&quot;Self&quot;" alwaysStopAt="true"/>
-    <context><option name="AZORA" value="true"/></context>
-  </template>
-
-  <template name="typealias" value="typealias $NAME$ = $TYPE$$END$"
-            description="Type alias" toReformat="true" toShortenFQNames="false">
-    <variable name="NAME" expression="" defaultValue="&quot;Name&quot;" alwaysStopAt="true"/>
-    <variable name="TYPE" expression="" defaultValue="&quot;Int&quot;" alwaysStopAt="true"/>
-    <context><option name="AZORA" value="true"/></context>
-  </template>
-
-  <!-- ── Modules and zones ────────────────────────────────────────── -->
-
-  <template name="module" value="module $PATH$$END$"
-            description="Module declaration" toReformat="true" toShortenFQNames="false">
-    <variable name="PATH" expression="" defaultValue="&quot;app.name&quot;" alwaysStopAt="true"/>
-    <context><option name="AZORA" value="true"/></context>
-  </template>
-
-  <template name="import" value="import $PATH$$END$"
-            description="Import" toReformat="true" toShortenFQNames="false">
-    <variable name="PATH" expression="" defaultValue="&quot;std.io&quot;" alwaysStopAt="true"/>
-    <context><option name="AZORA" value="true"/></context>
-  </template>
-
-  <template name="zone" value="zone $NAME$ {&#10;    $END$&#10;}"
-            description="Namespace" toReformat="true" toShortenFQNames="false">
-    <variable name="NAME" expression="" defaultValue="&quot;Name&quot;" alwaysStopAt="true"/>
-    <context><option name="AZORA" value="true"/></context>
-  </template>
-
-  <template name="friendzone" value="friend zone $PATH$ {&#10;    $END$&#10;}"
-            description="Shared zone" toReformat="true" toShortenFQNames="false">
-    <variable name="PATH" expression="" defaultValue="&quot;std::name&quot;" alwaysStopAt="true"/>
-    <context><option name="AZORA" value="true"/></context>
-  </template>
-
-  <template name="bridge" value="bridge .$TARGET$ {&#10;    func $NAME$($PARAMS$): $RETURN$&#10;    $END$&#10;}"
-            description="Foreign function block" toReformat="true" toShortenFQNames="false">
-    <variable name="TARGET" expression="" defaultValue="&quot;C&quot;" alwaysStopAt="true"/>
+  <template name="reactasyncfunc" value="react async func $NAME$($PARAMS$): $RETURN$ {&#10;    $END$&#10;}" description="Reactive asynchronous function" toReformat="true" toShortenFQNames="false">
     <variable name="NAME" expression="" defaultValue="&quot;name&quot;" alwaysStopAt="true"/>
     <variable name="PARAMS" expression="" defaultValue="" alwaysStopAt="true"/>
     <variable name="RETURN" expression="" defaultValue="&quot;Unit&quot;" alwaysStopAt="true"/>
     <context><option name="AZORA" value="true"/></context>
   </template>
+  <template name="main" value="func main() {&#10;    $END$&#10;}" description="Entry point" toReformat="true" toShortenFQNames="false"><context><option name="AZORA" value="true"/></context></template>
+  <template name="asyncmain" value="async func main() {&#10;    $END$&#10;}" description="Asynchronous entry point" toReformat="true" toShortenFQNames="false"><context><option name="AZORA" value="true"/></context></template>
 
-  <!-- ── Macros ───────────────────────────────────────────────────── -->
-
-  <template name="metaprefix" value="meta .Prefix(&quot;$NAME$&quot;) {&#10;    [...\$items] =&gt; $END$&#10;}"
-            description="Prefix macro" toReformat="false" toShortenFQNames="false">
-    <variable name="NAME" expression="" defaultValue="&quot;name&quot;" alwaysStopAt="true"/>
-    <context><option name="AZORA" value="true"/></context>
-  </template>
-
-  <template name="metainfix" value="meta .Infix(&quot;$OP$&quot;) {&#10;    \$a \$b =&gt; $END$&#10;}"
-            description="Infix macro" toReformat="false" toShortenFQNames="false">
-    <variable name="OP" expression="" defaultValue="&quot;op&quot;" alwaysStopAt="true"/>
-    <context><option name="AZORA" value="true"/></context>
-  </template>
-
-  <template name="metatype" value="meta type {&#10;    $NAME$ \$T =&gt; $END$&#10;}"
-            description="Type macro" toReformat="false" toShortenFQNames="false">
-    <variable name="NAME" expression="" defaultValue="&quot;name&quot;" alwaysStopAt="true"/>
-    <context><option name="AZORA" value="true"/></context>
-  </template>
-
-  <!-- ── Control flow ─────────────────────────────────────────────── -->
-
-  <template name="if" value="if $COND$ {&#10;    $END$&#10;}"
-            description="Conditional" toReformat="true" toShortenFQNames="false">
-    <variable name="COND" expression="" defaultValue="&quot;condition&quot;" alwaysStopAt="true"/>
-    <context><option name="AZORA" value="true"/></context>
-  </template>
-
-  <template name="guard" value="guard $COND$ else {&#10;    return$END$&#10;}"
-            description="Early exit" toReformat="true" toShortenFQNames="false">
-    <variable name="COND" expression="" defaultValue="&quot;condition&quot;" alwaysStopAt="true"/>
-    <context><option name="AZORA" value="true"/></context>
-  </template>
-
-  <template name="for" value="for $ITEM$ in $ITEMS$ {&#10;    $END$&#10;}"
-            description="For loop" toReformat="true" toShortenFQNames="false">
-    <variable name="ITEM" expression="" defaultValue="&quot;item&quot;" alwaysStopAt="true"/>
-    <variable name="ITEMS" expression="" defaultValue="&quot;items&quot;" alwaysStopAt="true"/>
-    <context><option name="AZORA" value="true"/></context>
-  </template>
-
-  <template name="while" value="while $COND$ {&#10;    $END$&#10;}"
-            description="While loop" toReformat="true" toShortenFQNames="false">
-    <variable name="COND" expression="" defaultValue="&quot;condition&quot;" alwaysStopAt="true"/>
-    <context><option name="AZORA" value="true"/></context>
-  </template>
-
-  <template name="loop" value="loop {&#10;    $END$&#10;}"
-            description="Unbounded loop" toReformat="true" toShortenFQNames="false">
-    <context><option name="AZORA" value="true"/></context>
-  </template>
-
-  <template name="when" value="when $VALUE$ {&#10;    is $TYPE$ -&gt; $END$&#10;    else -&gt; default&#10;}"
-            description="Pattern match" toReformat="true" toShortenFQNames="false">
-    <variable name="VALUE" expression="" defaultValue="&quot;value&quot;" alwaysStopAt="true"/>
+  <template name="pack" value="pack $NAME$ {&#10;    $BINDING$ $FIELD$: $TYPE$&#10;    $END$&#10;}" description="Product type" toReformat="true" toShortenFQNames="false">
+    <variable name="NAME" expression="" defaultValue="&quot;Name&quot;" alwaysStopAt="true"/>
+    <variable name="BINDING" expression="" defaultValue="&quot;var&quot;" alwaysStopAt="true"/>
+    <variable name="FIELD" expression="" defaultValue="&quot;field&quot;" alwaysStopAt="true"/>
     <variable name="TYPE" expression="" defaultValue="&quot;Type&quot;" alwaysStopAt="true"/>
     <context><option name="AZORA" value="true"/></context>
   </template>
-
-  <template name="defer" value="defer {&#10;    $END$&#10;}"
-            description="Deferred cleanup" toReformat="true" toShortenFQNames="false">
+  <template name="solopack" value="solo pack $NAME$ {&#10;    fin $FIELD$: $TYPE$&#10;    $END$&#10;}" description="Singleton product type" toReformat="true" toShortenFQNames="false">
+    <variable name="NAME" expression="" defaultValue="&quot;Name&quot;" alwaysStopAt="true"/>
+    <variable name="FIELD" expression="" defaultValue="&quot;field&quot;" alwaysStopAt="true"/>
+    <variable name="TYPE" expression="" defaultValue="&quot;Type&quot;" alwaysStopAt="true"/>
     <context><option name="AZORA" value="true"/></context>
   </template>
-
-  <!-- ── Reactive ─────────────────────────────────────────────────── -->
-
-  <template name="rem" value="rem $NAME$ = $VALUE$$END$"
-            description="Reactive state" toReformat="true" toShortenFQNames="false">
-    <variable name="NAME" expression="" defaultValue="&quot;name&quot;" alwaysStopAt="true"/>
-    <variable name="VALUE" expression="" defaultValue="&quot;0&quot;" alwaysStopAt="true"/>
+  <template name="enum" value="enum $NAME$ {&#10;    $FIRST$&#10;    $SECOND$&#10;}" description="Enumeration (newline-separated variants)" toReformat="true" toShortenFQNames="false">
+    <variable name="NAME" expression="" defaultValue="&quot;Name&quot;" alwaysStopAt="true"/>
+    <variable name="FIRST" expression="" defaultValue="&quot;First&quot;" alwaysStopAt="true"/>
+    <variable name="SECOND" expression="" defaultValue="&quot;Second&quot;" alwaysStopAt="true"/>
     <context><option name="AZORA" value="true"/></context>
   </template>
-
-  <template name="effect" value="effect {&#10;    $END$&#10;}"
-            description="Effect block" toReformat="true" toShortenFQNames="false">
+  <template name="variantenum" value="variant enum $NAME$ {&#10;    $VARIANT$($FIELD$: $TYPE$)&#10;    $END$&#10;}" description="Payload enumeration" toReformat="true" toShortenFQNames="false">
+    <variable name="NAME" expression="" defaultValue="&quot;Name&quot;" alwaysStopAt="true"/>
+    <variable name="VARIANT" expression="" defaultValue="&quot;Value&quot;" alwaysStopAt="true"/>
+    <variable name="FIELD" expression="" defaultValue="&quot;value&quot;" alwaysStopAt="true"/>
+    <variable name="TYPE" expression="" defaultValue="&quot;Type&quot;" alwaysStopAt="true"/>
     <context><option name="AZORA" value="true"/></context>
   </template>
-
-  <!-- ── Memory ───────────────────────────────────────────────────── -->
-
-  <template name="alloc" value="zone $SCOPE$ {&#10;    fin $NAME$ = alloc $TYPE$($SIZE$)&#10;    defer { drop $NAME$ }&#10;    $END$&#10;}"
-            description="Scoped allocation" toReformat="true" toShortenFQNames="false">
-    <variable name="SCOPE" expression="" defaultValue="&quot;scratch&quot;" alwaysStopAt="true"/>
-    <variable name="NAME" expression="" defaultValue="&quot;buffer&quot;" alwaysStopAt="true"/>
-    <variable name="TYPE" expression="" defaultValue="&quot;Byte&quot;" alwaysStopAt="true"/>
-    <variable name="SIZE" expression="" defaultValue="&quot;1024&quot;" alwaysStopAt="true"/>
+  <template name="error" value="error $NAME$ {&#10;    $FIRST$&#10;    $SECOND$&#10;}" description="Error set" toReformat="true" toShortenFQNames="false">
+    <variable name="NAME" expression="" defaultValue="&quot;Failure&quot;" alwaysStopAt="true"/>
+    <variable name="FIRST" expression="" defaultValue="&quot;Invalid&quot;" alwaysStopAt="true"/>
+    <variable name="SECOND" expression="" defaultValue="&quot;Unavailable&quot;" alwaysStopAt="true"/>
     <context><option name="AZORA" value="true"/></context>
   </template>
-
-  <template name="unsafe" value="unsafe {&#10;    $END$&#10;}"
-            description="Unsafe block" toReformat="true" toShortenFQNames="false">
+  <template name="spec" value="spec $NAME$ {&#10;    func $METHOD$($PARAMS$): $RETURN$&#10;    $END$&#10;}" description="Specification" toReformat="true" toShortenFQNames="false">
+    <variable name="NAME" expression="" defaultValue="&quot;Name&quot;" alwaysStopAt="true"/>
+    <variable name="METHOD" expression="" defaultValue="&quot;method&quot;" alwaysStopAt="true"/>
+    <variable name="PARAMS" expression="" defaultValue="" alwaysStopAt="true"/>
+    <variable name="RETURN" expression="" defaultValue="&quot;Unit&quot;" alwaysStopAt="true"/>
     <context><option name="AZORA" value="true"/></context>
   </template>
+  <template name="impl" value="impl $TYPE$ {&#10;    $END$&#10;}" description="Implementation block" toReformat="true" toShortenFQNames="false"><variable name="TYPE" expression="" defaultValue="&quot;TypeName&quot;" alwaysStopAt="true"/><context><option name="AZORA" value="true"/></context></template>
+  <template name="implfor" value="impl $SPEC$ for $TYPE$ {&#10;    $END$&#10;}" description="Specification implementation" toReformat="true" toShortenFQNames="false"><variable name="SPEC" expression="" defaultValue="&quot;SpecName&quot;" alwaysStopAt="true"/><variable name="TYPE" expression="" defaultValue="&quot;TypeName&quot;" alwaysStopAt="true"/><context><option name="AZORA" value="true"/></context></template>
+  <template name="annot" value="annot $NAME$ for .$TARGET$ {&#10;    fin $FIELD$: $TYPE$&#10;    $END$&#10;}" description="Annotation declaration" toReformat="true" toShortenFQNames="false"><variable name="NAME" expression="" defaultValue="&quot;Name&quot;" alwaysStopAt="true"/><variable name="TARGET" expression="" defaultValue="&quot;Pack&quot;" alwaysStopAt="true"/><variable name="FIELD" expression="" defaultValue="&quot;value&quot;" alwaysStopAt="true"/><variable name="TYPE" expression="" defaultValue="&quot;Type&quot;" alwaysStopAt="true"/><context><option name="AZORA" value="true"/></context></template>
+  <template name="graph" value="graph $NAME$ {&#10;    solo $SERVICE$()&#10;    $END$&#10;}" description="Dependency graph" toReformat="true" toShortenFQNames="false"><variable name="NAME" expression="" defaultValue="&quot;AppGraph&quot;" alwaysStopAt="true"/><variable name="SERVICE" expression="" defaultValue="&quot;Service&quot;" alwaysStopAt="true"/><context><option name="AZORA" value="true"/></context></template>
+  <template name="prop" value="prop $NAME$[self: Self&amp;]: $TYPE$ = $VALUE$$END$" description="Computed property" toReformat="true" toShortenFQNames="false"><variable name="NAME" expression="" defaultValue="&quot;name&quot;" alwaysStopAt="true"/><variable name="TYPE" expression="" defaultValue="&quot;Type&quot;" alwaysStopAt="true"/><variable name="VALUE" expression="" defaultValue="&quot;value&quot;" alwaysStopAt="true"/><context><option name="AZORA" value="true"/></context></template>
+  <template name="ctor" value="ctor[self: Self!]($PARAM$: $TYPE$) {&#10;    self.$FIELD$ = $PARAM$&#10;    $END$&#10;}" description="Constructor" toReformat="true" toShortenFQNames="false"><variable name="PARAM" expression="" defaultValue="&quot;value&quot;" alwaysStopAt="true"/><variable name="TYPE" expression="" defaultValue="&quot;Type&quot;" alwaysStopAt="true"/><variable name="FIELD" expression="" defaultValue="&quot;field&quot;" alwaysStopAt="true"/><context><option name="AZORA" value="true"/></context></template>
+  <template name="reactctor" value="react ctor[self: Self!, anchor: Anchor&amp;]($PARAM$: $TYPE$): Entity {&#10;    $END$&#10;}" description="Reactive constructor" toReformat="true" toShortenFQNames="false"><variable name="PARAM" expression="" defaultValue="&quot;value&quot;" alwaysStopAt="true"/><variable name="TYPE" expression="" defaultValue="&quot;Type&quot;" alwaysStopAt="true"/><context><option name="AZORA" value="true"/></context></template>
+  <template name="oper" value="oper$OP$ [self: Self&amp;](other: Self&amp;): Self {&#10;    $END$&#10;}" description="Operator overload" toReformat="true" toShortenFQNames="false"><variable name="OP" expression="" defaultValue="&quot;+&quot;" alwaysStopAt="true"/><context><option name="AZORA" value="true"/></context></template>
 
-  <!-- ── Contracts and tests ──────────────────────────────────────── -->
+  <template name="module" value="module $PATH$$END$" description="Module declaration" toReformat="true" toShortenFQNames="false"><variable name="PATH" expression="" defaultValue="&quot;app.name&quot;" alwaysStopAt="true"/><context><option name="AZORA" value="true"/></context></template>
+  <template name="import" value="import $PATH$$END$" description="Import" toReformat="true" toShortenFQNames="false"><variable name="PATH" expression="" defaultValue="&quot;std.io&quot;" alwaysStopAt="true"/><context><option name="AZORA" value="true"/></context></template>
+  <template name="realm" value="realm $PATH$ {&#10;    $END$&#10;}" description="Qualified realm" toReformat="true" toShortenFQNames="false"><variable name="PATH" expression="" defaultValue="&quot;app::name&quot;" alwaysStopAt="true"/><context><option name="AZORA" value="true"/></context></template>
+  <template name="bridge" value="bridge .$TARGET$ {&#10;    func $NAME$($PARAMS$): $RETURN$&#10;    $END$&#10;}" description="Foreign-function block" toReformat="true" toShortenFQNames="false"><variable name="TARGET" expression="" defaultValue="&quot;C&quot;" alwaysStopAt="true"/><variable name="NAME" expression="" defaultValue="&quot;name&quot;" alwaysStopAt="true"/><variable name="PARAMS" expression="" defaultValue="" alwaysStopAt="true"/><variable name="RETURN" expression="" defaultValue="&quot;Unit&quot;" alwaysStopAt="true"/><context><option name="AZORA" value="true"/></context></template>
 
-  <template name="contract"
-            value="func $NAME$($PARAM$: $TYPE$): $RETURN$&#10;in {&#10;    assert $COND$ { &quot;precondition&quot; }&#10;} out { r -&gt;&#10;    assert r != null { &quot;postcondition&quot; }&#10;} zone {&#10;    $END$&#10;}"
-            description="Function with contracts" toReformat="false" toShortenFQNames="false">
-    <variable name="NAME" expression="" defaultValue="&quot;name&quot;" alwaysStopAt="true"/>
-    <variable name="PARAM" expression="" defaultValue="&quot;value&quot;" alwaysStopAt="true"/>
-    <variable name="TYPE" expression="" defaultValue="&quot;Int&quot;" alwaysStopAt="true"/>
-    <variable name="RETURN" expression="" defaultValue="&quot;Int&quot;" alwaysStopAt="true"/>
-    <variable name="COND" expression="" defaultValue="&quot;value &gt; 0&quot;" alwaysStopAt="true"/>
-    <context><option name="AZORA" value="true"/></context>
-  </template>
+  <template name="macroprefix" value="macro @$NAME$ {&#10;    \$value =&gt; $END$&#10;}" description="Prefix macro" toReformat="false" toShortenFQNames="false"><variable name="NAME" expression="" defaultValue="&quot;name&quot;" alwaysStopAt="true"/><context><option name="AZORA" value="true"/></context></template>
+  <template name="macroinfix" value="macro \$left @$NAME$ \$right =&gt; $END$" description="Infix macro" toReformat="false" toShortenFQNames="false"><variable name="NAME" expression="" defaultValue="&quot;name&quot;" alwaysStopAt="true"/><context><option name="AZORA" value="true"/></context></template>
 
-  <template name="test" value="test &quot;$NAME$&quot; {&#10;    $END$&#10;}"
-            description="Test block" toReformat="true" toShortenFQNames="false">
-    <variable name="NAME" expression="" defaultValue="&quot;description&quot;" alwaysStopAt="true"/>
-    <context><option name="AZORA" value="true"/></context>
-  </template>
-
-  <template name="assert" value="assert $COND$ { &quot;$MESSAGE$&quot; }$END$"
-            description="Assertion" toReformat="true" toShortenFQNames="false">
-    <variable name="COND" expression="" defaultValue="&quot;condition&quot;" alwaysStopAt="true"/>
-    <variable name="MESSAGE" expression="" defaultValue="&quot;message&quot;" alwaysStopAt="true"/>
-    <context><option name="AZORA" value="true"/></context>
-  </template>
-
+  <template name="if" value="if $COND$ {&#10;    $END$&#10;}" description="Conditional" toReformat="true" toShortenFQNames="false"><variable name="COND" expression="" defaultValue="&quot;condition&quot;" alwaysStopAt="true"/><context><option name="AZORA" value="true"/></context></template>
+  <template name="for" value="for $ITEM$ in $ITEMS$ {&#10;    $END$&#10;}" description="For loop" toReformat="true" toShortenFQNames="false"><variable name="ITEM" expression="" defaultValue="&quot;item&quot;" alwaysStopAt="true"/><variable name="ITEMS" expression="" defaultValue="&quot;items&quot;" alwaysStopAt="true"/><context><option name="AZORA" value="true"/></context></template>
+  <template name="labeledfor" value="$LABEL$: for $ITEM$ in $ITEMS$ {&#10;    continue:$LABEL$&#10;    $END$&#10;}" description="Labeled loop" toReformat="true" toShortenFQNames="false"><variable name="LABEL" expression="" defaultValue="&quot;itemsLoop&quot;" alwaysStopAt="true"/><variable name="ITEM" expression="" defaultValue="&quot;item&quot;" alwaysStopAt="true"/><variable name="ITEMS" expression="" defaultValue="&quot;items&quot;" alwaysStopAt="true"/><context><option name="AZORA" value="true"/></context></template>
+  <template name="when" value="when $VALUE$ {&#10;    is $TYPE$ -&gt; $END$&#10;    else -&gt; fallback&#10;}" description="Pattern match" toReformat="true" toShortenFQNames="false"><variable name="VALUE" expression="" defaultValue="&quot;value&quot;" alwaysStopAt="true"/><variable name="TYPE" expression="" defaultValue="&quot;Type&quot;" alwaysStopAt="true"/><context><option name="AZORA" value="true"/></context></template>
+  <template name="remember" value="remember var $NAME$ = $VALUE$$END$" description="Remembered reactive binding" toReformat="true" toShortenFQNames="false"><variable name="NAME" expression="" defaultValue="&quot;state&quot;" alwaysStopAt="true"/><variable name="VALUE" expression="" defaultValue="&quot;0&quot;" alwaysStopAt="true"/><context><option name="AZORA" value="true"/></context></template>
+  <template name="retain" value="retain var $NAME$ = $VALUE$$END$" description="Retained reactive binding" toReformat="true" toShortenFQNames="false"><variable name="NAME" expression="" defaultValue="&quot;state&quot;" alwaysStopAt="true"/><variable name="VALUE" expression="" defaultValue="&quot;0&quot;" alwaysStopAt="true"/><context><option name="AZORA" value="true"/></context></template>
+  <template name="effect" value="effect {&#10;    $END$&#10;}" description="Reactive effect" toReformat="true" toShortenFQNames="false"><context><option name="AZORA" value="true"/></context></template>
+  <template name="effecton" value="effect [$DEPS$] {&#10;    $END$&#10;}" description="Reactive effect with dependencies" toReformat="true" toShortenFQNames="false"><variable name="DEPS" expression="" defaultValue="&quot;state&quot;" alwaysStopAt="true"/><context><option name="AZORA" value="true"/></context></template>
+  <template name="alloc" value="var $NAME$ = alloc $TYPE$[$SIZE$]&#10;defer { purge $NAME$ }$END$" description="Allocate and release memory" toReformat="true" toShortenFQNames="false"><variable name="NAME" expression="" defaultValue="&quot;buffer&quot;" alwaysStopAt="true"/><variable name="TYPE" expression="" defaultValue="&quot;Byte&quot;" alwaysStopAt="true"/><variable name="SIZE" expression="" defaultValue="&quot;1024&quot;" alwaysStopAt="true"/><context><option name="AZORA" value="true"/></context></template>
+  <template name="contract" value="func $NAME$($PARAM$: $TYPE$): $RETURN$&#10;in {&#10;    assert $PRE$ { &quot;precondition&quot; }&#10;} out { result -&gt;&#10;    assert $POST$ { &quot;postcondition&quot; }&#10;} scope {&#10;    $END$&#10;}" description="Function with contracts" toReformat="true" toShortenFQNames="false"><variable name="NAME" expression="" defaultValue="&quot;name&quot;" alwaysStopAt="true"/><variable name="PARAM" expression="" defaultValue="&quot;value&quot;" alwaysStopAt="true"/><variable name="TYPE" expression="" defaultValue="&quot;Type&quot;" alwaysStopAt="true"/><variable name="RETURN" expression="" defaultValue="&quot;Type&quot;" alwaysStopAt="true"/><variable name="PRE" expression="" defaultValue="&quot;condition&quot;" alwaysStopAt="true"/><variable name="POST" expression="" defaultValue="&quot;condition&quot;" alwaysStopAt="true"/><context><option name="AZORA" value="true"/></context></template>
+  <template name="test" value="test &quot;$NAME$&quot; {&#10;    $END$&#10;}" description="Test block" toReformat="true" toShortenFQNames="false"><variable name="NAME" expression="" defaultValue="&quot;description&quot;" alwaysStopAt="true"/><context><option name="AZORA" value="true"/></context></template>
+  <template name="query" value="@query [$COMPONENTS$] @with $WITH$ @without $WITHOUT$$END$" description="ECS query type" toReformat="true" toShortenFQNames="false"><variable name="COMPONENTS" expression="" defaultValue="&quot;Transform!, Velocity&amp;&quot;" alwaysStopAt="true"/><variable name="WITH" expression="" defaultValue="&quot;Player&quot;" alwaysStopAt="true"/><variable name="WITHOUT" expression="" defaultValue="&quot;Disabled&quot;" alwaysStopAt="true"/><context><option name="AZORA" value="true"/></context></template>
 </templateSet>

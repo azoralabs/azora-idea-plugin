@@ -79,7 +79,7 @@ object AzoraProjectScaffolder {
             import std.io
 
             /** Prints a greeting. */
-            func greet(who: String): String {
+            func greet(who: std::String): std::String {
                 return "Hello, ${'$'}who!"
             }
 
@@ -102,14 +102,14 @@ object AzoraProjectScaffolder {
             module $module
 
             /** A point in two dimensions. */
-            expose pack Point {
-                var x: Real = 0.0
-                var y: Real = 0.0
+            exposed pack Point {
+                var x: std::Double = 0.0
+                var y: std::Double = 0.0
             }
 
             impl Point {
                 /** The distance from this point to [other]. */
-                expose func distanceTo(other: Point): Real {
+                exposed func distanceTo[self: Self&](other: Point): std::Double {
                     fin dx = other.x - self.x
                     fin dy = other.y - self.y
                     return dx * dx + dy * dy
@@ -141,7 +141,7 @@ object AzoraProjectScaffolder {
             module $module.core
 
             /** The greeting the application prints. */
-            expose func greeting(who: String): String {
+            exposed func greeting(who: std::String): std::String {
                 return "Hello, ${'$'}who!"
             }
 

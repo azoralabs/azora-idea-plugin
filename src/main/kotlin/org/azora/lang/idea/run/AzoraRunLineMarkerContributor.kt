@@ -25,12 +25,9 @@ import com.intellij.psi.PsiElement
 /**
  * Puts a run gutter icon on every Azora entry point and test.
  *
- * Three things are runnable and all three get an icon:
- *
- * * `func main(…)` — the synchronous entry point.
- * * `task main(…)` — the asynchronous entry point.
- * * `test "…" { … }` — every test block, anchored on the `test` keyword so the
- *   icon always lands on the declaration line.
+ * Entry points and tests get an icon: `func main`, its `async` / `react`
+ * modifier forms, and every `test` block. Retired declaration forms are
+ * intentionally not recognized.
  */
 class AzoraRunLineMarkerContributor : RunLineMarkerContributor() {
 
@@ -50,8 +47,8 @@ class AzoraRunLineMarkerContributor : RunLineMarkerContributor() {
         if (type == AzoraTokenTypes.IDENTIFIER && element.text == "main") {
             val keyword = previousMeaningful(element) ?: return null
             if (keyword.node?.elementType != AzoraTokenTypes.DECLARATION_KEYWORD) return null
-            val form = keyword.text
-            if (form != "func" && form != "task") return null
+            if (keyword.text != "func") return null
+            val form = entryPointForm(file.text, element.textRange.startOffset)
             return Info(AllIcons.RunConfigurations.TestState.Run, ExecutorAction.getActions(0)) {
                 "Run $form main()"
             }
@@ -81,5 +78,17 @@ class AzoraRunLineMarkerContributor : RunLineMarkerContributor() {
             sibling = sibling.nextSibling
         }
         return sibling
+    }
+
+    private fun entryPointForm(source: String, nameOffset: Int): String {
+        val lineStart = source.lastIndexOf('\n', (nameOffset - 1).coerceAtLeast(0)) + 1
+        val header = source.substring(lineStart, nameOffset)
+        return when {
+            Regex("""\breact\s+async\s+func\s*$""").containsMatchIn(header) -> "react async func"
+            Regex("""\basync\s+react\s+func\s*$""").containsMatchIn(header) -> "react async func"
+            Regex("""\breact\s+func\s*$""").containsMatchIn(header) -> "react func"
+            Regex("""\basync\s+func\s*$""").containsMatchIn(header) -> "async func"
+            else -> "func"
+        }
     }
 }

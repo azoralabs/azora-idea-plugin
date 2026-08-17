@@ -86,16 +86,16 @@ object AzoraTokenTypes {
     /** General-purpose keyword fallback (anything not in a more specific category). */
     @JvmField val KEYWORD = AzoraTokenType("KEYWORD")
 
-    /** Declaration keywords: `func`, `pack`, `enum`, `slot`, `zone`, `impl`, `spec`, etc. */
+    /** Declaration keywords: `func`, `pack`, `enum`, `variant`, `realm`, `impl`, `spec`, etc. */
     @JvmField val DECLARATION_KEYWORD = AzoraTokenType("DECLARATION_KEYWORD")
 
     /** Control-flow keywords: `if`, `else`, `for`, `while`, `loop`, `when`, `return`, `break`, `continue`, etc. */
     @JvmField val CONTROL_KEYWORD = AzoraTokenType("CONTROL_KEYWORD")
 
-    /** Modifier keywords: `expose`, `confine`, `inline`, `isolated`, `threadlocal`. */
+    /** Modifier keywords: `exposed`, `protected`, `confined`, `inline`, `react`, `threadlocal`. */
     @JvmField val MODIFIER_KEYWORD = AzoraTokenType("MODIFIER_KEYWORD")
 
-    /** Memory keywords: `alloc`, `drop`, `unsafe`, `deref`. */
+    /** Memory keywords: `alloc`, `purge`, `take`, `unsafe`, `inject`, `preserve`. */
     @JvmField val MEMORY_KEYWORD = AzoraTokenType("MEMORY_KEYWORD")
 
     /** Reactive keywords: `mem`, `rem`, `ret`, `effect`. */

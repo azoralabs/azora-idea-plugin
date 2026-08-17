@@ -187,12 +187,13 @@ class AzoraLexerAdapter : LexerBase() {
                     result.add(LexToken(AzoraTokenTypes.WHITE_SPACE, start + startOffset, pos + startOffset))
                 }
 
-                // Decorator: @name
-                ch == '@' && pos + 1 < len && (source[pos + 1].isLetter() || source[pos + 1] == '_') -> {
-                    val start = pos
-                    pos++ // skip @
-                    while (pos < len && (source[pos].isLetterOrDigit() || source[pos] == '_')) pos++
-                    result.add(LexToken(AzoraTokenTypes.DECORATOR, start + startOffset, pos + startOffset))
+                // `@` is its own compiler token.  Keeping the sigil separate is
+                // essential for qualified decorators (`@std::Serializable`) and
+                // current prefix macros (`@std::arr[...]`): their name segments
+                // remain real identifiers that semantic resolution can inspect.
+                ch == '@' -> {
+                    result.add(LexToken(AzoraTokenTypes.DECORATOR, pos + startOffset, pos + 1 + startOffset))
+                    pos++
                 }
 
                 // String literal: "...", """raw...""", with `$name` / `${…}` holes
@@ -215,52 +216,65 @@ class AzoraLexerAdapter : LexerBase() {
                     result.add(LexToken(AzoraTokenTypes.CHAR_LITERAL, start + startOffset, pos + startOffset))
                 }
 
-                // Number literal
-                ch.isDigit() || (ch == '.' && pos + 1 < len && source[pos + 1].isDigit()) -> {
+                // Number literal. This deliberately mirrors compiler Lexer.scanNumber.
+                // A leading-dot spelling such as `.5` is DOT + INT in Azora.
+                ch.isDigit() -> {
                     val start = pos
-                    var isReal = ch == '.'
+                    var isReal = false
+                    var isHex = false
                     if (ch == '0' && pos + 1 < len && (source[pos + 1] == 'x' || source[pos + 1] == 'X')) {
-                        pos += 2 // hex
-                        while (pos < len && (source[pos].isLetterOrDigit() || source[pos] == '_')) pos++
+                        pos += 2
+                        isHex = true
+                        while (pos < len && (source[pos].isDigit() || source[pos] in 'a'..'f' || source[pos] in 'A'..'F' || source[pos] == '_')) pos++
+                    } else if (ch == '0' && pos + 1 < len && (source[pos + 1] == 'o' || source[pos + 1] == 'O')) {
+                        pos += 2
+                        while (pos < len && (source[pos] in '0'..'7' || source[pos] == '_')) pos++
                     } else if (ch == '0' && pos + 1 < len && (source[pos + 1] == 'b' || source[pos + 1] == 'B')) {
-                        pos += 2 // binary
+                        pos += 2
                         while (pos < len && (source[pos] == '0' || source[pos] == '1' || source[pos] == '_')) pos++
                     } else {
                         while (pos < len && (source[pos].isDigit() || source[pos] == '_')) pos++
-                        if (pos < len && source[pos] == '.' && pos + 1 < len && source[pos + 1].isDigit()) {
-                            isReal = true
-                            pos++ // skip dot
-                            while (pos < len && (source[pos].isDigit() || source[pos] == '_')) pos++
+
+                        val previousCodeToken = result.lastOrNull {
+                            it.type != AzoraTokenTypes.WHITE_SPACE && !AzoraTokenTypes.COMMENTS.contains(it.type)
                         }
-                        // Exponent
-                        if (pos < len && (source[pos] == 'e' || source[pos] == 'E')) {
+                        val afterMemberAccess = previousCodeToken?.type == AzoraTokenTypes.DOT
+                        if (!afterMemberAccess && pos < len && source[pos] == '.' && pos + 1 < len && source[pos + 1].isDigit()) {
+                            isReal = true
+                            pos++
+                            while (pos < len && (source[pos].isDigit() || source[pos] == '_')) pos++
+                        } else if (!afterMemberAccess && pos < len && source[pos] == '.' &&
+                            (pos + 1 >= len || (source[pos + 1] != '.' && !source[pos + 1].isLetter() && source[pos + 1] != '_'))
+                        ) {
+                            isReal = true
+                            pos++
+                        }
+
+                        if (!afterMemberAccess && pos < len && (source[pos] == 'e' || source[pos] == 'E')) {
                             isReal = true
                             pos++
                             if (pos < len && (source[pos] == '+' || source[pos] == '-')) pos++
-                            while (pos < len && source[pos].isDigit()) pos++
+                            while (pos < len && (source[pos].isDigit() || source[pos] == '_')) pos++
                         }
                     }
-                    // Canonical Azora suffixes (`b`, `ub`, `s`, `us`, `u`,
-                    // `L`, `uL`, `c`, `uc`, `f`, `D`) plus the older i/u/f
-                    // width spellings accepted by existing projects.
-                    val suffixStart = pos
+
+                    // Canonical suffixes, in the compiler's maximal-munch order.
                     if (pos < len && source[pos] == 'u') {
-                        pos++
-                        if (pos < len && source[pos].isDigit()) {
-                            // Legacy `u8`/`u32`/`u64` spelling.
-                            while (pos < len && source[pos].isDigit()) pos++
-                        } else if (pos >= len || source[pos].isWhitespace() || source[pos] in "bLc") {
-                            // Canonical `ub`, `uL`, and `uc` spellings.
-                            if (pos < len && source[pos] in "bLc") pos++
-                        } else {
-                            pos = suffixStart
+                        val following = source.getOrNull(pos + 1)
+                        when {
+                            following == 's' -> pos += 2
+                            following == 'L' -> pos += 2
+                            !isHex && following == 'c' -> pos += 2
+                            !isHex && following == 'b' -> pos += 2
+                            following == null || !following.isLetterOrDigit() -> pos++
                         }
-                    } else if (pos < len && source[pos] in "bsLcufDi") {
-                        val suffix = source[pos]
+                    } else if (pos < len && source[pos] in "sLD" ||
+                        (!isHex && pos < len && source[pos] in "bcf")
+                    ) {
+                        if (source[pos] == 'f' || source[pos] == 'D') isReal = true
                         pos++
-                        while (pos < len && source[pos].isDigit()) pos++
-                        if (suffix == 'f' || suffix == 'D') isReal = true
                     }
+
                     val type = if (isReal) AzoraTokenTypes.REAL_LITERAL else AzoraTokenTypes.INT_LITERAL
                     result.add(LexToken(type, start + startOffset, pos + startOffset))
                 }
@@ -270,13 +284,7 @@ class AzoraLexerAdapter : LexerBase() {
                     val start = pos
                     while (pos < len && (source[pos].isLetterOrDigit() || source[pos] == '_' || source[pos] == '$')) pos++
                     val word = source.substring(start, pos)
-                    // A macro invocation `name@(…/[…/{…` or the mutable `name!@…`
-                    // colors the name as a MACRO (purple).
-                    val macroInvoke = source.getOrNull(pos) == '@' &&
-                        source.getOrNull(pos + 1).let { it == '(' || it == '[' || it == '{' } ||
-                        source.getOrNull(pos) == '!' && source.getOrNull(pos + 1) == '@'
-                    val type = if (macroInvoke) AzoraTokenTypes.MACRO else classifyWord(source, start, word)
-                    result.add(LexToken(type, start + startOffset, pos + startOffset))
+                    result.add(LexToken(classifyWord(source, start, word), start + startOffset, pos + startOffset))
                 }
 
                 // Multi-character operators (order matters, longest match first)
@@ -449,7 +457,11 @@ class AzoraLexerAdapter : LexerBase() {
             '*' -> if (next == '=') AzoraTokenTypes.OPERATOR to 2 else AzoraTokenTypes.OPERATOR to 1
             '/' -> if (next == '=') AzoraTokenTypes.OPERATOR to 2 else AzoraTokenTypes.OPERATOR to 1
             '%' -> if (next == '=') AzoraTokenTypes.OPERATOR to 2 else AzoraTokenTypes.OPERATOR to 1
-            '=' -> if (next == '=') AzoraTokenTypes.OPERATOR to 2 else AzoraTokenTypes.OPERATOR to 1
+            '=' -> when (next) {
+                '=' -> AzoraTokenTypes.OPERATOR to 2
+                '>' -> AzoraTokenTypes.ARROW to 2
+                else -> AzoraTokenTypes.OPERATOR to 1
+            }
             '!' -> if (next == '=') AzoraTokenTypes.OPERATOR to 2 else AzoraTokenTypes.OPERATOR to 1
             '<' -> when {
                 next == '=' && next2 == '>' -> AzoraTokenTypes.OPERATOR to 3
@@ -475,7 +487,9 @@ class AzoraLexerAdapter : LexerBase() {
             '^' -> if (next == '=') AzoraTokenTypes.OPERATOR to 2 else AzoraTokenTypes.OPERATOR to 1
             '~' -> AzoraTokenTypes.OPERATOR to 1
             '?' -> when {
+                next == '.' -> AzoraTokenTypes.OPERATOR to 2
                 next == '=' -> AzoraTokenTypes.OPERATOR to 2
+                next == '!' -> AzoraTokenTypes.OPERATOR to 2
                 next == '?' -> AzoraTokenTypes.OPERATOR to 2
                 next == '+' && next2 == '=' -> AzoraTokenTypes.OPERATOR to 3
                 next == '-' && next2 == '=' -> AzoraTokenTypes.OPERATOR to 3
@@ -486,16 +500,6 @@ class AzoraLexerAdapter : LexerBase() {
                 next == '-' && next2 == '-' -> AzoraTokenTypes.OPERATOR to 3
                 else -> AzoraTokenTypes.OPERATOR to 1
             }
-            '#' -> {
-                // Map key/set member access: #[, #[=, #{, #{=
-                when {
-                    next == '[' && next2 == '=' -> AzoraTokenTypes.OPERATOR to 3
-                    next == '[' -> AzoraTokenTypes.OPERATOR to 2
-                    next == '{' && next2 == '=' -> AzoraTokenTypes.OPERATOR to 3
-                    next == '{' -> AzoraTokenTypes.OPERATOR to 2
-                    else -> null
-                }
-            }
             else -> null
         }
     }
@@ -504,7 +508,7 @@ class AzoraLexerAdapter : LexerBase() {
      * Post-processes the token list to reclassify identifiers inside generic
      * parameter declarations as [AzoraTokenTypes.TYPE_PARAMETER] tokens.
      *
-     * Detects patterns like `func<T>`, `pack<T, U>`, `impl<T>`, etc.
+     * Detects the current grammar (`func name<T>`, `pack Name<T>`, etc.).
      * and marks the identifiers between `<` and `>` as type parameters.
      * Also marks usages of those type parameter names within the same
      * declaration body in a second pass.
@@ -519,13 +523,24 @@ class AzoraLexerAdapter : LexerBase() {
         var i = 0
         while (i < result.size) {
             val tok = result[i]
-            // Look for keyword followed by < (skipping whitespace)
-            if (tok.type == AzoraTokenTypes.DECLARATION_KEYWORD) {
-                var j = i + 1
-                // Skip whitespace
-                while (j < result.size && result[j].type == AzoraTokenTypes.WHITE_SPACE) j++
-                // Check for <
-                if (j < result.size && isLessThan(result[j])) {
+            if (tok.type == AzoraTokenTypes.DECLARATION_KEYWORD && tokenText(tok) in GENERIC_DECLARATION_HEADS) {
+                // Current Azora puts generic parameters after the declared name.
+                val nameIndex = nextSignificant(result, i)
+                if (nameIndex == null) {
+                    i++
+                    continue
+                }
+                if (result[nameIndex].type != AzoraTokenTypes.IDENTIFIER) {
+                    i++
+                    continue
+                }
+                val genericStart = nextSignificant(result, nameIndex)
+                if (genericStart == null) {
+                    i++
+                    continue
+                }
+                var j = genericStart
+                if (isLessThan(result[j])) {
                     val headerStart = j
                     j++ // skip <
                     var depth = 1
@@ -534,14 +549,12 @@ class AzoraLexerAdapter : LexerBase() {
                     while (j < result.size && depth > 0) {
                         val t = result[j]
                         when {
-                            isLessThan(t) -> {
-                                depth++
-                                expectsName = true
-                            }
+                            isLessThan(t) -> depth++
                             isGreaterThan(t) -> depth--
+                            isShiftRight(t) -> depth -= 2
                             t.type == AzoraTokenTypes.COMMA && depth == 1 -> expectsName = true
                             t.type == AzoraTokenTypes.IDENTIFIER && depth == 1 && expectsName -> {
-                                val name = buffer.subSequence(t.start, t.end).toString()
+                                val name = tokenText(t)
                                 result[j] = LexToken(AzoraTokenTypes.TYPE_PARAMETER, t.start, t.end)
                                 names.add(name)
                                 expectsName = false
@@ -550,12 +563,7 @@ class AzoraLexerAdapter : LexerBase() {
                         j++
                     }
                     if (names.isNotEmpty()) {
-                        var end = result.lastIndex
-                        var body = j
-                        while (body < result.size && result[body].type == AzoraTokenTypes.WHITE_SPACE) body++
-                        if (body < result.size && result[body].type == AzoraTokenTypes.L_BRACE) {
-                            end = matchingBrace(result, body) ?: result.lastIndex
-                        }
+                        val end = declarationScopeEnd(result, j)
                         scopes.add(GenericScope(names, headerStart, end))
                     }
                 }
@@ -569,7 +577,7 @@ class AzoraLexerAdapter : LexerBase() {
             for (k in scope.start..scope.end.coerceAtMost(result.lastIndex)) {
                 val tok = result[k]
                 if (tok.type == AzoraTokenTypes.IDENTIFIER) {
-                    val name = buffer.subSequence(tok.start, tok.end).toString()
+                    val name = tokenText(tok)
                     if (name in scope.names) result[k] = LexToken(AzoraTokenTypes.TYPE_PARAMETER, tok.start, tok.end)
                 }
             }
@@ -577,6 +585,49 @@ class AzoraLexerAdapter : LexerBase() {
 
         return result
     }
+
+    /** Finds the body closing brace, or the physical-line end for a bodyless declaration. */
+    private fun declarationScopeEnd(tokens: List<LexToken>, from: Int): Int {
+        var parens = 0
+        var brackets = 0
+        var angles = 0
+        var index = from
+        while (index < tokens.size) {
+            val token = tokens[index]
+            when {
+                token.type == AzoraTokenTypes.L_PAREN -> parens++
+                token.type == AzoraTokenTypes.R_PAREN -> parens = (parens - 1).coerceAtLeast(0)
+                token.type == AzoraTokenTypes.L_BRACKET -> brackets++
+                token.type == AzoraTokenTypes.R_BRACKET -> brackets = (brackets - 1).coerceAtLeast(0)
+                isLessThan(token) -> angles++
+                isGreaterThan(token) -> angles = (angles - 1).coerceAtLeast(0)
+                isShiftRight(token) -> angles = (angles - 2).coerceAtLeast(0)
+                token.type == AzoraTokenTypes.L_BRACE && parens == 0 && brackets == 0 && angles == 0 ->
+                    return matchingBrace(tokens, index) ?: tokens.lastIndex
+                token.type == AzoraTokenTypes.SEMICOLON && parens == 0 && brackets == 0 && angles == 0 ->
+                    return index
+                token.type == AzoraTokenTypes.WHITE_SPACE && tokenText(token).contains('\n') &&
+                    parens == 0 && brackets == 0 && angles == 0 -> {
+                    // A body or `where` may begin on the next line. Continue only
+                    // when the next word is one of those declaration continuations.
+                    val next = nextSignificant(tokens, index)
+                    val nextText = next?.let { tokenText(tokens[it]) }
+                    if (nextText !in setOf("where", "{")) return (index - 1).coerceAtLeast(from)
+                }
+            }
+            index++
+        }
+        return tokens.lastIndex
+    }
+
+    private fun nextSignificant(tokens: List<LexToken>, from: Int): Int? {
+        var index = from + 1
+        while (index < tokens.size && AzoraTokenTypes.IGNORABLE.contains(tokens[index].type)) index++
+        return index.takeIf { it < tokens.size }
+    }
+
+    private fun tokenText(token: LexToken): String =
+        buffer.subSequence(token.start.coerceAtLeast(0), token.end.coerceAtMost(buffer.length)).toString()
 
     /** Finds the closing brace for a declaration body in the flat token list. */
     private fun matchingBrace(tokens: List<LexToken>, open: Int): Int? {
@@ -603,6 +654,10 @@ class AzoraLexerAdapter : LexerBase() {
         tok.type == AzoraTokenTypes.OPERATOR && tok.end - tok.start == 1 &&
                 buffer.length > tok.start && buffer[tok.start] == '>'
 
+    /** The lexer applies maximal munch, so nested generic closes may be one `>>` token. */
+    private fun isShiftRight(tok: LexToken): Boolean =
+        tok.type == AzoraTokenTypes.OPERATOR && tokenText(tok) == ">>"
+
     private fun classifyWord(source: String, start: Int, word: String): IElementType {
         if (word in SOFT_KEYWORDS) {
             return contextualKeywordType(source, start, word) ?: AzoraTokenTypes.IDENTIFIER
@@ -615,7 +670,7 @@ class AzoraLexerAdapter : LexerBase() {
      *
      * Only words whose *keyword-ness* is positional are handled here. Whether a
      * word is a macro is never decided lexically — a name is a macro because
-     * some `meta` declaration says so, which only the symbol index knows, so
+     * a current `macro` declaration says so, which only the symbol index knows, so
      * `AzoraSemanticAnnotator` colors those on a later pass.
      */
     private fun contextualKeywordType(source: String, start: Int, word: String): IElementType? {
@@ -623,13 +678,18 @@ class AzoraLexerAdapter : LexerBase() {
         if (previous in DECLARATION_NAME_PREFIXES) return null
         return when (word) {
             "where" -> if (isContextualWhere(source, start)) AzoraTokenTypes.CONTROL_KEYWORD else null
-            "mod" -> if (isContextualMod(source, start)) AzoraTokenTypes.DECLARATION_KEYWORD else null
             "module" -> if (isContextualModule(source, start)) AzoraTokenTypes.DECLARATION_KEYWORD else null
             "union" -> if (isContextualUnion(source, start)) AzoraTokenTypes.DECLARATION_KEYWORD else null
-            "async" -> if (nextWord(source, start + word.length) == "func") AzoraTokenTypes.MODIFIER_KEYWORD else null
-            "without" -> if (lineContainsBefore(source, start, "binds")) AzoraTokenTypes.CONTROL_KEYWORD else null
-            "derives", "includes", "binds", "requires" ->
-                if (isContextualClause(source, start)) AzoraTokenTypes.CONTROL_KEYWORD else null
+            "async" -> if (isContextualAsync(source, start)) AzoraTokenTypes.MODIFIER_KEYWORD else null
+            "escaping" -> if (isContextualEscaping(source, start)) AzoraTokenTypes.MODIFIER_KEYWORD else null
+            "replace" -> if (isContextualGraphClause(source, start, expectsName = true)) AzoraTokenTypes.CONTROL_KEYWORD else null
+            "includes" -> if (isContextualGraphClause(source, start, expectsName = true)) AzoraTokenTypes.CONTROL_KEYWORD else null
+            "derives" -> if (isContextualDerives(source, start)) AzoraTokenTypes.CONTROL_KEYWORD else null
+            "binds" -> if (isContextualBinds(source, start)) AzoraTokenTypes.CONTROL_KEYWORD else null
+            "requires" -> if (isContextualRequires(source, start)) AzoraTokenTypes.CONTROL_KEYWORD else null
+            "assoc" -> if (isContextualAssoc(source, start)) AzoraTokenTypes.CONTROL_KEYWORD else null
+            "lend" -> if (isContextualLend(source, start)) AzoraTokenTypes.MEMORY_KEYWORD else null
+            "seal" -> if (isContextualSeal(source, start)) AzoraTokenTypes.CONTROL_KEYWORD else null
             else -> null
         }
     }
@@ -701,58 +761,243 @@ class AzoraLexerAdapter : LexerBase() {
         return false
     }
 
+    /**
+     * `assoc` introduces associated names or bindings only after a complete
+     * `spec`/`impl` subject. It remains an identifier in declarations, values,
+     * parameters, and member access.
+     */
+    private fun isContextualAssoc(source: String, start: Int): Boolean {
+        val lineStart = source.lastIndexOf('\n', start - 1).let { if (it < 0) 0 else it + 1 }
+        var index = start - 1
+        var parenDepth = 0
+        var bracketDepth = 0
+        var angleDepth = 0
+        var sawSubject = false
+
+        while (index >= lineStart) {
+            when (val c = source[index]) {
+                ' ', '\t', '\r' -> index--
+                ')' -> {
+                    parenDepth++
+                    index--
+                }
+                ']' -> {
+                    bracketDepth++
+                    index--
+                }
+                '>' -> {
+                    angleDepth++
+                    index--
+                }
+                '(' -> {
+                    if (parenDepth == 0) return false
+                    parenDepth--
+                    index--
+                }
+                '[' -> {
+                    if (bracketDepth == 0) return false
+                    bracketDepth--
+                    if (parenDepth == 0 && bracketDepth == 0 && angleDepth == 0) sawSubject = true
+                    index--
+                }
+                '<' -> {
+                    if (angleDepth == 0) return false
+                    angleDepth--
+                    index--
+                }
+                '{', '}', ';', '=' -> {
+                    if (parenDepth == 0 && bracketDepth == 0 && angleDepth == 0) return false
+                    index--
+                }
+                else -> {
+                    if (c.isLetterOrDigit() || c == '_' || c == '$') {
+                        val wordEnd = index + 1
+                        while (index >= lineStart &&
+                            (source[index].isLetterOrDigit() || source[index] == '_' || source[index] == '$')
+                        ) {
+                            index--
+                        }
+                        if (parenDepth == 0 && bracketDepth == 0 && angleDepth == 0) {
+                            when (source.substring(index + 1, wordEnd)) {
+                                "spec", "impl" -> return sawSubject
+                                "for" -> if (!sawSubject) return false
+                                else -> sawSubject = true
+                            }
+                        }
+                    } else {
+                        index--
+                    }
+                }
+            }
+        }
+        return false
+    }
+
     /** `module` is contextual and only starts a module declaration. */
     private fun isContextualModule(source: String, start: Int): Boolean {
         if (nextWord(source, start + "module".length) == null) return false
         val lineStart = source.lastIndexOf('\n', start - 1).let { if (it < 0) 0 else it + 1 }
         val prefix = source.substring(lineStart, start).trim()
         return prefix.isEmpty() || prefix.split(Regex("\\s+")).all {
-            it in setOf("exposed", "confined", "export")
-        }
-    }
-
-    /** Legacy SDK sources spell module declarations as `mod path`. */
-    private fun isContextualMod(source: String, start: Int): Boolean {
-        if (nextWord(source, start + "mod".length) == null) return false
-        val lineStart = source.lastIndexOf('\n', start - 1).let { if (it < 0) 0 else it + 1 }
-        val prefix = source.substring(lineStart, start).trim()
-        return prefix.isEmpty() || prefix.split(Regex("\\s+")).all {
-            it in setOf("expose", "confined", "export")
+            it in setOf("exposed", "confined")
         }
     }
 
     /** `union Name` is a declaration; `value.union()` is not. */
     private fun isContextualUnion(source: String, start: Int): Boolean {
-        val previous = previousWord(source, start)
-        if (source.substring(0, start).trimEnd().endsWith(".")) return false
-        val next = nextWord(source, start + "union".length) ?: return false
-        return next.firstOrNull()?.isUpperCase() == true && previous !in setOf(".", "::")
+        if (isAfterMemberSeparator(source, start)) return false
+        var index = skipWhitespace(source, start + "union".length)
+        if (index >= source.length || !isIdentifierStart(source[index])) return false
+        index = skipIdentifier(source, index)
+        index = skipWhitespace(source, index)
+        return source.getOrNull(index) == '{' || source.getOrNull(index) == '<'
     }
 
-    /** Clause words are keywords only after a declaration header. */
-    private fun isContextualClause(source: String, start: Int): Boolean {
-        val lineStart = source.lastIndexOf('\n', start - 1).let { if (it < 0) 0 else it + 1 }
-        val prefix = source.substring(lineStart, start)
-        if (prefix.trimEnd().endsWith('.') || prefix.trimEnd().endsWith("::")) return false
-        var parenDepth = 0
-        var bracketDepth = 0
-        for (c in prefix) {
-            when (c) {
-                '(' -> parenDepth++
-                ')' -> parenDepth = (parenDepth - 1).coerceAtLeast(0)
-                '[' -> bracketDepth++
-                ']' -> bracketDepth = (bracketDepth - 1).coerceAtLeast(0)
-            }
+    /** `async` qualifies a declaration/type/lambda, but remains a callable name in `async(...)`. */
+    private fun isContextualAsync(source: String, start: Int): Boolean {
+        if (isAfterMemberSeparator(source, start)) return false
+        val after = skipWhitespace(source, start + "async".length)
+        val next = nextWord(source, start + "async".length)
+        if (next == "func" || next == "prop") return true
+        return when (source.getOrNull(after)) {
+            '{', '[', '<' -> true
+            '(' -> isCallableTypeAt(source, after)
+            else -> false
         }
-        if (parenDepth > 0 || bracketDepth > 0) return false
-        return prefix.split(Regex("[^A-Za-z0-9_$]+"))
-            .any { it in CLAUSE_DECLARATION_HEADS }
     }
 
-    private fun lineContainsBefore(source: String, start: Int, word: String): Boolean {
-        val lineStart = source.lastIndexOf('\n', start - 1).let { if (it < 0) 0 else it + 1 }
-        return Regex("\\b${Regex.escape(word)}\\b").containsMatchIn(source.substring(lineStart, start))
+    /** `escaping` has grammar meaning only immediately before a callable type. */
+    private fun isContextualEscaping(source: String, start: Int): Boolean {
+        if (isAfterMemberSeparator(source, start)) return false
+        val after = skipWhitespace(source, start + "escaping".length)
+        return isCallableTypeAt(source, after)
     }
+
+    /** `replace` and `includes` are clauses of a graph header only. */
+    private fun isContextualGraphClause(source: String, start: Int, expectsName: Boolean): Boolean {
+        if (isAfterMemberSeparator(source, start)) return false
+        val prefix = linePrefix(source, start)
+        if (!Regex("""(?:^|\s)graph\s+[A-Za-z_$][\w$]*(?:\s+replace\s+[A-Za-z_$][\w$]*)?\s*$""")
+                .containsMatchIn(prefix)) return false
+        val after = skipWhitespace(source, start + currentWordLength(source, start))
+        return if (expectsName) {
+            source.getOrNull(after)?.let(::isIdentifierStart) == true || source.getOrNull(after) == '['
+        } else true
+    }
+
+    /** `derives` follows the name/generics of a pack. Unions cannot derive. */
+    private fun isContextualDerives(source: String, start: Int): Boolean {
+        if (isAfterMemberSeparator(source, start)) return false
+        val prefix = linePrefix(source, start)
+        val declaration = Regex(
+            """(?:^|\s)pack\s+[A-Za-z_$][\w$]*(?:\s*<[^>{}\n]*>)?\s*$""",
+        ).containsMatchIn(prefix)
+        if (!declaration) return false
+        val after = skipWhitespace(source, start + "derives".length)
+        return source.getOrNull(after)?.let(::isIdentifierStart) == true || source.getOrNull(after) == '['
+    }
+
+    /** `binds` appears on an annotation header or on a graph registration. */
+    private fun isContextualBinds(source: String, start: Int): Boolean {
+        if (isAfterMemberSeparator(source, start)) return false
+        val prefix = linePrefix(source, start)
+        val annotationHeader = Regex(
+            """(?:^|\s)annot\s+[A-Za-z_$][\w$]*(?:\s+for\s+.+)?\s*$""",
+        ).containsMatchIn(prefix)
+        val graphRegistration = Regex(
+            """^\s*(?:solo|factory|scope)\s+[A-Za-z_$][\w$]*(?:\s*\([^\n]*\))?\s*$""",
+        ).matches(prefix)
+        if (!annotationHeader && !graphRegistration) return false
+        val after = skipWhitespace(source, start + "binds".length)
+        return source.getOrNull(after)?.let(::isIdentifierStart) == true || source.getOrNull(after) == '['
+    }
+
+    /** `requires` belongs to a spec header and nowhere else. */
+    private fun isContextualRequires(source: String, start: Int): Boolean {
+        if (isAfterMemberSeparator(source, start)) return false
+        val prefix = linePrefix(source, start)
+        if (!Regex("""(?:^|\s)spec\s+[A-Za-z_$][\w$]*(?:\s*<[^>{}\n]*>)?(?:\s*:\s*.+)?\s*$""")
+                .containsMatchIn(prefix)) return false
+        val after = skipWhitespace(source, start + "requires".length)
+        return source.getOrNull(after)?.let(::isIdentifierStart) == true || source.getOrNull(after) == '['
+    }
+
+    /** `lend name` is an ownership prefix; member/declaration uses keep identifier meaning. */
+    private fun isContextualLend(source: String, start: Int): Boolean {
+        if (isAfterMemberSeparator(source, start)) return false
+        val next = skipWhitespace(source, start + "lend".length)
+        return source.getOrNull(next)?.let(::isIdentifierStart) == true
+    }
+
+    /** `seal` is only parsed as the first value of a `when` branch. */
+    private fun isContextualSeal(source: String, start: Int): Boolean {
+        if (isAfterMemberSeparator(source, start)) return false
+        var previous = start - 1
+        while (previous >= 0 && source[previous].isWhitespace()) previous--
+        if (source.getOrNull(previous) == '{') {
+            previous--
+            while (previous >= 0 && source[previous].isWhitespace()) previous--
+        }
+        val followsBranchArrow = previous >= 1 && source[previous] == '>' &&
+            (source[previous - 1] == '-' || source[previous - 1] == '=')
+        if (!followsBranchArrow) return false
+
+        val next = skipWhitespace(source, start + "seal".length)
+        val c = source.getOrNull(next) ?: return false
+        return isIdentifierStart(c) || c.isDigit() || c in setOf('.', '"', '\'', '(', '[', '{', '-', '!')
+    }
+
+    /** Whether a `(`/`[` at [start] begins a callable type ending in `->`. */
+    private fun isCallableTypeAt(source: String, start: Int): Boolean {
+        val open = source.getOrNull(start) ?: return false
+        if (open != '(' && open != '[') return false
+        val close = if (open == '(') ')' else ']'
+        var depth = 0
+        var index = start
+        while (index < source.length) {
+            when (source[index]) {
+                open -> depth++
+                close -> {
+                    depth--
+                    if (depth == 0) break
+                }
+                '\n' -> if (depth == 0) return false
+            }
+            index++
+        }
+        if (index >= source.length) return false
+        index = skipWhitespace(source, index + 1)
+        if (open == '[' && source.getOrNull(index) == '(') {
+            return isCallableTypeAt(source, index)
+        }
+        return source.startsWith("->", index)
+    }
+
+    private fun linePrefix(source: String, start: Int): String {
+        val lineStart = source.lastIndexOf('\n', start - 1).let { if (it < 0) 0 else it + 1 }
+        return source.substring(lineStart, start)
+    }
+
+    private fun isAfterMemberSeparator(source: String, start: Int): Boolean {
+        val prefix = source.substring(0, start).trimEnd()
+        return prefix.endsWith('.') || prefix.endsWith("::")
+    }
+
+    private fun skipWhitespace(source: String, from: Int): Int {
+        var index = from
+        while (index < source.length && source[index].isWhitespace()) index++
+        return index
+    }
+
+    private fun skipIdentifier(source: String, from: Int): Int {
+        var index = from
+        while (index < source.length && (source[index].isLetterOrDigit() || source[index] == '_' || source[index] == '$')) index++
+        return index
+    }
+
+    private fun isIdentifierStart(char: Char): Boolean = char.isLetter() || char == '_' || char == '$'
+
+    private fun currentWordLength(source: String, start: Int): Int = skipIdentifier(source, start) - start
 
     /** Reads the next identifier after [from], or `null` when punctuation intervenes. */
     private fun nextWord(source: String, from: Int): String? {
@@ -798,7 +1043,7 @@ class AzoraLexerAdapter : LexerBase() {
         private val DECLARATION_NAME_PREFIXES = setOf(
             "func", "pack", "enum", "variant", "error", "spec", "realm", "scope",
             "module", "prop", "var", "val", "fin", "let", "typealias", "test",
-            "annot", "impl", "union",
+            "annot", "impl", "union", "graph", "oper", "bind",
         )
 
         /** Declaration heads that may legally introduce a `where` clause. */
@@ -807,9 +1052,9 @@ class AzoraLexerAdapter : LexerBase() {
             "variant", "typealias", "union",
         )
 
-        private val CLAUSE_DECLARATION_HEADS = setOf(
-            "pack", "enum", "variant", "spec", "annot", "impl", "func", "typealias",
-            "graph", "realm",
+        /** Declarations whose own type parameters follow their declared name. */
+        private val GENERIC_DECLARATION_HEADS = setOf(
+            "func", "pack", "enum", "spec", "typealias", "prop", "error", "union",
         )
 
         /**
