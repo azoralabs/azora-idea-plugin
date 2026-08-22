@@ -24,6 +24,7 @@ import org.azora.lang.idea.symbol.SymbolInfo
 import org.azora.lang.idea.symbol.SymbolKind
 import com.intellij.lang.documentation.AbstractDocumentationProvider
 import com.intellij.lang.documentation.DocumentationMarkup
+import com.intellij.psi.PsiDocCommentBase
 import com.intellij.psi.PsiElement
 
 /**
@@ -43,6 +44,27 @@ class AzoraDocumentationProvider : AbstractDocumentationProvider() {
         resolve(effective)?.let { return renderDocumentation(it) }
         return annotationName(effective)?.let(::renderAnnotationDoc)
     }
+
+    /**
+     * The text a `/** … */` shows when the editor renders it in place.
+     *
+     * The same prose the popup shows, without the signature: the declaration is
+     * on the next line, so repeating it in the box above would say it twice.
+     */
+    override fun generateRenderedDoc(comment: PsiDocCommentBase): String? {
+        val body = stripDocMarkers(comment.text).takeIf { it.isNotBlank() } ?: return null
+        return renderDocComment(body)
+    }
+
+    /**
+     * A doc comment's prose, with the `/**`, the `*/` and the leading `*` of
+     * each line taken off - none of which is what was written.
+     */
+    private fun stripDocMarkers(text: String): String = text
+        .removePrefix("/**").removeSuffix("*/")
+        .lines()
+        .joinToString("\n") { it.trim().removePrefix("*").trim() }
+        .trim()
 
     override fun getQuickNavigateInfo(element: PsiElement?, originalElement: PsiElement?): String? {
         val target = originalElement ?: element ?: return null
@@ -242,7 +264,7 @@ class AzoraDocumentationProvider : AbstractDocumentationProvider() {
         SymbolKind.SLOT -> "variant enum"
         SymbolKind.FUNC -> "func"
         SymbolKind.VIEW -> "react func"
-        SymbolKind.SCOPE -> "realm"
+        SymbolKind.SCOPE -> "scope"
         SymbolKind.SOLO -> "solo"
         SymbolKind.WRAP -> "typealias"
         SymbolKind.VAR -> "var"

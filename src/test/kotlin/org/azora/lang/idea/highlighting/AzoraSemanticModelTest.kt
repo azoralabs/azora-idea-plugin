@@ -23,6 +23,7 @@ import com.intellij.openapi.editor.colors.TextAttributesKey
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 /**
@@ -152,10 +153,63 @@ class AzoraSemanticModelTest {
     }
 
     @Test
-    fun `unknown calls and capitalized identifiers are not colored as known symbols`() {
+    fun `every form that binds a name is a form that answers for it`() {
+        // What binds without being coloured: a loop's row, a pattern's
+        // capture, a lambda's parameter, a scope's name. Each is an answer to
+        // "does this name resolve?", and a form missing from here is a red
+        // underline under working code.
+        val source = listOf(
+            "scope fmt {",
+            "    func go() {}",
+            "}",
+            "func f(rows: Array<Int>) {",
+            "    for visited in 0..<3 { println(visited) }",
+            "    when value {",
+            "        SerialValue.Number(digits) -> { println(digits) }",
+            "        else -> {}",
+            "    }",
+            "    fin lambda = { taken: Int -> taken + 1 }",
+            "    for [head, tail] in rows { println(head) }",
+            "    inline for name in @arr[\"a\"] with index { println(name) }",
+            "    try { go() } catch failure { println(failure) }",
+            "}",
+        ).joinToString("\n")
+
+        val bound = AzoraSemanticModel.boundNames(tokensOf(source))
+
+        for (name in listOf("fmt", "visited", "digits", "taken", "head", "tail", "name", "index", "failure")) {
+            assertTrue(name in bound, "'$name' is bound by the form that introduces it; bound = $bound")
+        }
+    }
+
+    @Test
+    fun `every spec in a derives list reads as a spec`() {
+        val source = "bridge pack Char derives [PartialEqual, Equal, Order, Hash]"
+        val symbols = AzoraSemanticSymbols(
+            specTypes = setOf("PartialEqual", "Equal", "Order", "Hash"),
+        )
+        val tokens = tokensOf(source)
+        val classified = AzoraSemanticModel.classify(tokens, AzoraMacros.EMPTY, symbols)
+
+        for (spec in listOf("PartialEqual", "Equal", "Order", "Hash")) {
+            val token = tokens.first { it.text == spec }
+            assertEquals(
+                AzoraSyntaxHighlighter.SPEC_TYPE,
+                classified[token.start],
+                "'$spec' is a spec wherever it is named",
+            )
+        }
+    }
+
+    @Test
+    fun `an unknown call still reads as a call, an unknown type does not`() {
         val source = "func main() { MissingType(unknownCall()) }"
+        // Applying a name to `(` is a call whatever the name turns out to be;
+        // that it does not resolve is the annotator's to report, not something
+        // the colour should hide.
+        assertEquals(AzoraSyntaxHighlighter.FUNCTION_CALL, keyFor(source, "unknownCall"))
+        // A capitalized one builds a type, and an unknown type is a guess.
         assertNull(keyFor(source, "MissingType"))
-        assertNull(keyFor(source, "unknownCall"))
     }
 
     @Test
@@ -178,7 +232,35 @@ class AzoraSemanticModelTest {
     }
 
     @Test
-    fun `receiver identifiers are parameters rather than keywords`() {
+    fun `a property is italic white at its declaration and where it is read`() {
+        val source = """
+            pack Point {
+                var x: Double
+            }
+            impl Point {
+                prop magnitude[self: Self&]: Double = self.x
+
+                func report[self: Self&](): Double {
+                    return self.magnitude
+                }
+            }
+        """.trimIndent()
+
+        assertEquals(AzoraSyntaxHighlighter.PROPERTY, keyFor(source, "magnitude", occurrence = 0))
+        // A property's name is the ordinary identifier tone, italic and
+        // underlined - not a brighter white than the field beside it.
+        assertEquals(
+            AzoraPalette.FOREGROUND,
+            AzoraPalette.PROPERTY,
+            "a 'prop' name reads as any other name",
+        )
+        assertEquals(AzoraSyntaxHighlighter.PROPERTY_CALL, keyFor(source, "magnitude", occurrence = 1))
+        // A plain pack field is not a property and keeps its own key.
+        assertEquals(AzoraSyntaxHighlighter.FIELD, keyFor(source, "x", occurrence = 1))
+    }
+
+    @Test
+    fun `receiver identifiers are context parameters rather than keywords`() {
         val source = """
             pack App { fin name: String }
             impl App {
@@ -188,8 +270,93 @@ class AzoraSemanticModelTest {
             }
         """.trimIndent()
 
-        assertEquals(AzoraSyntaxHighlighter.PARAMETER, keyFor(source, "self", occurrence = 0))
-        assertEquals(AzoraSyntaxHighlighter.PARAMETER, keyFor(source, "self", occurrence = 1))
+        // The receiver is the one thing the call site must supply, so it is
+        // marked apart from the parameters the function invents for itself -
+        // and it reads the same wherever it is written, because naming it in
+        // the body is naming that same supplied value.
+        assertEquals(AzoraSyntaxHighlighter.CONTEXT_PARAMETER, keyFor(source, "self", occurrence = 0))
+        assertEquals(AzoraSyntaxHighlighter.CONTEXT_PARAMETER, keyFor(source, "self", occurrence = 1))
+    }
+
+    @Test
+    fun `a prop declares a receiver exactly as a func does`() {
+        val source = """
+            pack Cursor { var index: Int }
+            impl Cursor {
+                prop isAtEnd[self: Self&]: Bool = self.index >= 10
+            }
+        """.trimIndent()
+
+        assertEquals(AzoraSyntaxHighlighter.CONTEXT_PARAMETER, keyFor(source, "self", occurrence = 0))
+        assertEquals(AzoraSyntaxHighlighter.CONTEXT_PARAMETER, keyFor(source, "self", occurrence = 1))
+    }
+
+    @Test
+    fun `a contracted callable keeps its receiver through every clause`() {
+        // `in { … } scope { … }` is one declaration. Ending it at the first
+        // brace ended it at the precondition, and the body that follows - the
+        // part that actually names `self` - was read as if it were outside any
+        // callable at all.
+        val source = """
+            impl Queue<T> {
+                func dequeue[self: Self!](): T
+                in {
+                    assert self.size > 0 { "Queue is empty" }
+                } scope {
+                    self.size--
+                    return self.front
+                }
+            }
+        """.trimIndent()
+
+        for (occurrence in 0..3) {
+            assertEquals(
+                AzoraSyntaxHighlighter.CONTEXT_PARAMETER,
+                keyFor(source, "self", occurrence = occurrence),
+                "self #$occurrence",
+            )
+        }
+    }
+
+    @Test
+    fun `the types the compiler provides are types`() {
+        // Nothing in `.az` declares `Array`, so no index can supply it however
+        // fresh it is - it read as an unknown word beside the `List` next to it.
+        val source = "func strSplit(s: String, delim: String): Array<String> { return [] }"
+
+        assertEquals(AzoraSyntaxHighlighter.TYPE_NAME, keyFor(source, "Array", occurrence = 0))
+        assertEquals(AzoraSyntaxHighlighter.TYPE_NAME, keyFor(source, "String", occurrence = 0))
+    }
+
+    @Test
+    fun `the receiver shorthand is the same receiver written shorter`() {
+        // Inside an `impl` the receiver's type is never in question, so `self`
+        // may leave it out. Dropping the type drops nothing about what the name
+        // means, so it must not drop the colour either - a reader scanning an
+        // `impl` sees one receiver colour whichever spelling a member chose.
+        val source = """
+            enum Ordering { case Less, Greater }
+            impl Ordering {
+                prop reversed[self]: Ordering {
+                    return when self {
+                        .Less -> .Greater
+                        else -> .Less
+                    }
+                }
+
+                func flip[self&](): Ordering = self.reversed
+
+                func consume[self](): Ordering = self
+            }
+        """.trimIndent()
+
+        for (occurrence in 0..5) {
+            assertEquals(
+                AzoraSyntaxHighlighter.CONTEXT_PARAMETER,
+                keyFor(source, "self", occurrence = occurrence),
+                "self #$occurrence",
+            )
+        }
     }
 
     @Test
@@ -211,16 +378,39 @@ class AzoraSemanticModelTest {
         assertEquals(AzoraSyntaxHighlighter.SPEC_TYPE, keyFor(source, "PrettyPrint", occurrence = 0))
         assertEquals(AzoraSyntaxHighlighter.SPEC_TYPE, keyFor(source, "PrettyPrint", occurrence = 1))
         assertEquals(AzoraSyntaxHighlighter.SPEC_PROPERTY, keyFor(source, "pretty", occurrence = 0))
-        assertEquals(AzoraSyntaxHighlighter.UNUSED_SPEC_MEMBER, keyFor(source, "render", occurrence = 0))
+        // Nothing in this file calls `render`, and that changes none of its
+        // colours: a colour says what a name is, and "nobody calls it" is a
+        // claim about the project that the annotator's warning makes instead.
+        assertEquals(AzoraSyntaxHighlighter.SPEC_FUNCTION, keyFor(source, "render", occurrence = 0))
         assertEquals(AzoraSyntaxHighlighter.OVERRIDE_PROPERTY, keyFor(source, "pretty", occurrence = 1))
-        assertEquals(AzoraSyntaxHighlighter.UNUSED_OVERRIDE_MEMBER, keyFor(source, "render", occurrence = 1))
+        assertEquals(AzoraSyntaxHighlighter.OVERRIDE_FUNCTION, keyFor(source, "render", occurrence = 1))
     }
 
     @Test
-    fun `import paths and complete realm paths are italic`() {
+    fun `a declaration nothing calls keeps the colour of what it is`() {
+        val source = """
+            @Experimental(since: "0.1")
+            spec From<T> {
+                func from(value: T): Self
+            }
+
+            impl Ordering {
+                prop isLessOrEqual[self]: Bool = true
+
+                func unheard(): Int { return 1 }
+            }
+        """.trimIndent()
+
+        assertEquals(AzoraSyntaxHighlighter.SPEC_FUNCTION, keyFor(source, "from", occurrence = 0))
+        assertEquals(AzoraSyntaxHighlighter.PROPERTY, keyFor(source, "isLessOrEqual", occurrence = 0))
+        assertEquals(AzoraSyntaxHighlighter.FUNCTION_DECLARATION, keyFor(source, "unheard", occurrence = 0))
+    }
+
+    @Test
+    fun `import paths and complete scope paths are italic`() {
         val source = """
             import std.container.tuple
-            realm ide::editor {
+            scope ide::editor {
                 func make() { std::println("ok") }
             }
         """.trimIndent()
@@ -229,11 +419,12 @@ class AzoraSemanticModelTest {
         assertEquals(AzoraSyntaxHighlighter.ZONE_USAGE, keyFor(source, "ide", occurrence = 0))
         assertEquals(AzoraSyntaxHighlighter.ZONE_USAGE, keyFor(source, "editor", occurrence = 0))
         assertEquals(AzoraSyntaxHighlighter.ZONE_USAGE, keyFor(source, "std", occurrence = 1))
-        assertNull(keyFor(source, "println", occurrence = 0))
+        // The owning scope is italic and the name it reaches is the call it is.
+        assertEquals(AzoraSyntaxHighlighter.FUNCTION_CALL, keyFor(source, "println", occurrence = 0))
     }
 
     @Test
-    fun `generic parameters are blue semantic generics and unused declarations are dimmed`() {
+    fun `generic parameters are their own color and an unused binding keeps its own`() {
         val source = """
             func identity<T>(value: T): T {
                 fin unused = 1
@@ -248,7 +439,170 @@ class AzoraSemanticModelTest {
         assertEquals(AzoraSyntaxHighlighter.TYPE_PARAMETER, keyFor(source, "T", occurrence = 0))
         assertEquals(AzoraSyntaxHighlighter.TYPE_PARAMETER, keyFor(source, "T", occurrence = 1))
         assertEquals(AzoraSyntaxHighlighter.PARAMETER, keyFor(source, "value", occurrence = 0))
-        assertEquals(AzoraSyntaxHighlighter.UNUSED, keyFor(source, "unused"))
+        // Being unused is reported as a warning, not painted on: a binding
+        // nothing reads is still a binding and reads like one.
+        assertEquals(AzoraSyntaxHighlighter.IDENTIFIER, keyFor(source, "unused"))
+    }
+
+    @Test
+    fun `a grouped binding binds every name in the group`() {
+        // `fin [a, b] = …` is the lines it stands for, so each name is a
+        // binding of the block it was written in - not an unknown word.
+        val source = """
+            func rehash[self!]() {
+                fin [oldKeys, oldValues] = with self { [keys, values] }
+                let [newKeys: K*, newValues: V*] = alloc .() * 8
+                use(oldKeys, oldValues, newKeys, newValues)
+            }
+        """.trimIndent()
+
+        for (name in listOf("oldKeys", "oldValues", "newKeys", "newValues")) {
+            assertEquals(AzoraSyntaxHighlighter.IDENTIFIER, keyFor(source, name), name)
+        }
+    }
+
+    @Test
+    fun `a grouped target names members, not the parameters beside them`() {
+        // `parent` is both a parameter of this function and a field of the
+        // pack. Inside `self.[…]` it is the field, and the index beside it is
+        // the parameter it is written with.
+        val source = """
+            impl TreeMap<K, V> {
+                func _allocateNode[self!](key: K, value: V, parent: Int): Int {
+                    self.[keys[elem], parent[elem]] = [key, parent]
+                    return elem
+                }
+            }
+        """.trimIndent()
+
+        assertEquals(AzoraSyntaxHighlighter.FIELD, keyFor(source, "parent", occurrence = 1))
+        assertEquals(AzoraSyntaxHighlighter.FIELD, keyFor(source, "keys"))
+        // The value beside it really is the parameter.
+        assertEquals(AzoraSyntaxHighlighter.PARAMETER, keyFor(source, "parent", occurrence = 2))
+        // And the parameter's own declaration is unaffected.
+        assertEquals(AzoraSyntaxHighlighter.PARAMETER, keyFor(source, "parent", occurrence = 0))
+    }
+
+    @Test
+    fun `an enum case is italic where it is declared and where it is named`() {
+        val source = """
+            enum Compare {
+                Less
+                Equal
+            }
+
+            func pick(): Compare { return Compare.Less }
+        """.trimIndent()
+
+        assertEquals(AzoraSyntaxHighlighter.ENUM_CASE, keyFor(source, "Less", occurrence = 0))
+        assertEquals(AzoraSyntaxHighlighter.ENUM_CASE, keyFor(source, "Less", occurrence = 1))
+        assertEquals(AzoraSyntaxHighlighter.ENUM_CASE, keyFor(source, "Equal", occurrence = 0))
+    }
+
+    @Test
+    fun `an error case wears the failure red rather than the enum colour`() {
+        val source = """
+            variant error IndexError {
+                OutOfBounds(index: Int, size: Int)
+            }
+
+            func at(i: Int): Int ?! IndexError { return .OutOfBounds(i, 0) }
+        """.trimIndent()
+
+        assertEquals(AzoraSyntaxHighlighter.ERROR_CASE, keyFor(source, "OutOfBounds", occurrence = 0))
+        assertEquals(AzoraSyntaxHighlighter.ERROR_CASE, keyFor(source, "OutOfBounds", occurrence = 1))
+        // `error` here heads the declaration; `IndexError` is the name it takes.
+        assertEquals(AzoraSyntaxHighlighter.TYPE_DECLARATION, keyFor(source, "IndexError", occurrence = 0))
+    }
+
+    @Test
+    fun `a keyword spelled in a name position is a name`() {
+        // `error` names the last segment of a module path, `take` names a method
+        // - neither can be the keyword it is spelled like.
+        assertEquals(AzoraSyntaxHighlighter.MODULE_PATH, keyFor("module std.error", "error"))
+
+        val source = """
+            func take(): Int { return 1 }
+            func main() { take() }
+        """.trimIndent()
+        assertEquals(AzoraSyntaxHighlighter.FUNCTION_DECLARATION, keyFor(source, "take", occurrence = 0))
+        assertEquals(AzoraSyntaxHighlighter.FUNCTION_CALL, keyFor(source, "take", occurrence = 1))
+    }
+
+    @Test
+    fun `an impl header declares type parameters for its whole body`() {
+        val source = """
+            impl Clone for Shared<T> {
+                func duplicate[self: Self&](): T { return self.value }
+            }
+        """.trimIndent()
+
+        assertEquals(AzoraSyntaxHighlighter.TYPE_PARAMETER, keyFor(source, "T", occurrence = 0))
+        assertEquals(AzoraSyntaxHighlighter.TYPE_PARAMETER, keyFor(source, "T", occurrence = 1))
+    }
+
+    @Test
+    fun `a macro hole is neither a name nor a call`() {
+        val source = """
+            macro @vec {
+                [...${'$'}items] => std.container.list::ArrayList(...${'$'}items)
+            }
+        """.trimIndent()
+
+        assertEquals(AzoraSyntaxHighlighter.MACRO_HOLE, keyFor(source, "${'$'}items", occurrence = 0))
+        assertEquals(AzoraSyntaxHighlighter.MACRO_HOLE, keyFor(source, "${'$'}items", occurrence = 1))
+    }
+
+    @Test
+    fun `a braced hole in a macro is gold, braces and all`() {
+        val source = """
+            macro @map {
+                [...${'$'}{key: value}] => mutableMapOf(...mapEntry(${'$'}key, ${'$'}value))
+            }
+        """.trimIndent()
+
+        val tokens = tokensOf(source)
+        val classified = AzoraSemanticModel.classify(tokens, AzoraMacros.EMPTY)
+        fun keyAt(text: String, occurrence: Int = 0): TextAttributesKey? =
+            tokens.filter { it.text == text }.getOrNull(occurrence)?.let { classified[it.start] }
+
+        // The whole hole: the names it binds and the braces around them. The
+        // braces are not the string world's - nothing here interpolates - and
+        // leaving them blue put the one blue thing in a macro body around the
+        // one gold thing.
+        assertEquals(AzoraSyntaxHighlighter.MACRO_HOLE, keyAt("key"))
+        assertEquals(AzoraSyntaxHighlighter.MACRO_HOLE, keyAt("value"))
+        assertEquals(setOf(source.indexOf("${'$'}{")), AzoraSemanticModel.macroHoleSigils(tokens))
+        for (part in listOf("${'$'}{", "}")) {
+            assertEquals(AzoraSyntaxHighlighter.MACRO_HOLE, keyAt(part), part)
+        }
+        // And the `$name` holes in the expansion.
+        assertEquals(AzoraSyntaxHighlighter.MACRO_HOLE, keyAt("${'$'}key"))
+        assertEquals(AzoraSyntaxHighlighter.MACRO_HOLE, keyAt("${'$'}value"))
+        // What the macro expands *to* is ordinary code.
+        assertEquals(AzoraSyntaxHighlighter.FUNCTION_CALL, keyAt("mutableMapOf"))
+        assertEquals(AzoraSyntaxHighlighter.FUNCTION_CALL, keyAt("mapEntry"))
+    }
+
+    @Test
+    fun `a braced splice outside a macro is not a hole`() {
+        // `${…}` elsewhere splices a value in and keeps the interpolation blue,
+        // which the lexer assigns; the semantic pass leaves it alone.
+        val source = "inline prop to${'$'}{T.typeName}: T = into<T>"
+        val tokens = tokensOf(source)
+        val classified = AzoraSemanticModel.classify(tokens, AzoraMacros.EMPTY)
+        val brace = tokens.first { it.text == "${'$'}{" }
+
+        assertNull(classified[brace.start])
+    }
+
+    @Test
+    fun `every segment of a qualified path is the module it names`() {
+        val source = "fin values = std.container.list::ArrayList()"
+
+        for (segment in listOf("std", "container", "list")) {
+            assertEquals(AzoraSyntaxHighlighter.ZONE_USAGE, keyFor(source, segment), segment)
+        }
     }
 
     @Test

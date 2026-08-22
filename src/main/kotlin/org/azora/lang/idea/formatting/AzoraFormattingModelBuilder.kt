@@ -17,6 +17,7 @@
 package org.azora.lang.idea.formatting
 
 import org.azora.lang.idea.AzoraTokenTypes
+import com.intellij.formatting.Alignment
 import com.intellij.formatting.Block
 import com.intellij.formatting.ChildAttributes
 import com.intellij.formatting.FormattingContext
@@ -28,7 +29,7 @@ import com.intellij.formatting.Spacing
 import com.intellij.formatting.SpacingBuilder
 import com.intellij.formatting.Wrap
 import com.intellij.lang.ASTNode
-import com.intellij.psi.formatter.common.AbstractBlock
+import com.intellij.openapi.util.TextRange
 import com.intellij.psi.codeStyle.CodeStyleSettings
 
 /**
@@ -36,17 +37,27 @@ import com.intellij.psi.codeStyle.CodeStyleSettings
  *
  * Azora's PSI is a flat token stream — semantic structure comes from the
  * compiler, not from this plugin — so the formatter recovers block structure
- * from brace nesting: a `{`, `[` or `(` opens a level and its partner closes
- * it, and everything between is indented one step. That is enough for
- * *Reformat Code* to normalize indentation without a full grammar, and it can
- * never mis-indent code it does not understand, because unbalanced input simply
- * stops nesting.
+ * from bracket nesting: a `{`, `[` or `(` opens a level and its partner closes
+ * it, and everything between becomes one nested block indented a step further
+ * than its parent. That is enough for *Reformat Code* and for the reindent that
+ * runs on paste, and it can never mis-indent code it does not understand,
+ * because an unclosed bracket simply stops nesting.
+ *
+ * The nesting has to be a real tree. An [Indent.getNormalIndent] is one step
+ * *relative to the enclosing block*, so a model that hands every token to the
+ * file block, however deep the token really is, can only ever produce a single
+ * step of indentation — which is what a pasted block used to collapse to.
  */
 class AzoraFormattingModelBuilder : FormattingModelBuilder {
 
     override fun createModel(context: FormattingContext): FormattingModel {
         val settings = context.codeStyleSettings
-        val root = AzoraBlock(context.node, Indent.getNoneIndent(), spacingBuilder(settings))
+        val root = AzoraBlock(
+            significantTokens(context.node),
+            context.node.textRange,
+            Indent.getNoneIndent(),
+            spacingBuilder(settings),
+        )
         return FormattingModelProvider.createFormattingModelForPsiFile(
             context.containingFile,
             root,
@@ -66,71 +77,123 @@ class AzoraFormattingModelBuilder : FormattingModelBuilder {
             .before(AzoraTokenTypes.L_BRACE).spaces(1)
             .before(AzoraTokenTypes.DOT).spaces(0)
             .after(AzoraTokenTypes.DOT).spaces(0)
+
+    /**
+     * The file's tokens minus whitespace.
+     *
+     * Whitespace is what the formatter decides, so it must not be inside a
+     * block; everything else is, so the blocks tile the code exactly.
+     */
+    private fun significantTokens(file: ASTNode): List<ASTNode> =
+        file.getChildren(null).filter { it.textLength > 0 && it.text.isNotBlank() }
 }
 
 /**
- * A formatting block covering one bracket nesting level.
+ * One bracket nesting level, or one token within it.
  *
- * Children are the leaf tokens at this level, plus one nested block per
- * bracketed run. Tokens inside a level get a normal indent; the closing
- * bracket returns to the enclosing level's indent.
+ * A block holds the tokens of its own level in order. Each bracketed run
+ * becomes a single child block carrying [Indent.getNormalIndent], so depth
+ * accumulates: a token three brackets deep sits inside three nested blocks and
+ * is indented three steps.
  */
 private class AzoraBlock(
-    node: ASTNode,
+    private val tokens: List<ASTNode>,
+    private val range: TextRange,
     private val ownIndent: Indent,
     private val spacing: SpacingBuilder,
-) : AbstractBlock(node, Wrap.createWrap(com.intellij.formatting.WrapType.NONE, false), null) {
+) : Block {
 
-    override fun buildChildren(): List<Block> {
-        val children = node.getChildren(null).filter { it.textLength > 0 && it.text.isNotBlank() }
-        if (children.isEmpty()) return emptyList()
-        return buildLevel(children, 0).first
-    }
+    private val children: List<Block> by lazy { buildChildren() }
 
-    /**
-     * Groups [children] from [start] into blocks until the level's closing
-     * bracket, returning the blocks and the index just past that bracket.
-     */
-    private fun buildLevel(children: List<ASTNode>, start: Int): Pair<List<Block>, Int> {
-        val blocks = mutableListOf<Block>()
-        var i = start
-        while (i < children.size) {
-            val child = children[i]
-            when (child.elementType) {
-                in OPENERS -> {
-                    blocks.add(AzoraBlock(child, Indent.getNoneIndent(), spacing))
-                    val (nested, next) = buildLevel(children, i + 1)
-                    blocks.addAll(nested)
-                    i = next
-                    // The closing bracket sits at the enclosing indent.
-                    if (i < children.size && children[i].elementType in CLOSERS) {
-                        blocks.add(AzoraBlock(children[i], Indent.getNoneIndent(), spacing))
-                        i++
-                    }
-                }
-                in CLOSERS -> return blocks.map { indented(it) } to i
-                else -> {
-                    blocks.add(AzoraBlock(child, Indent.getNoneIndent(), spacing))
-                    i++
-                }
-            }
-        }
-        return blocks to i
-    }
+    override fun getTextRange(): TextRange = range
 
-    /** Re-wraps a block so its content is indented one level. */
-    private fun indented(block: Block): Block =
-        if (block is AzoraBlock) AzoraBlock(block.node, Indent.getNormalIndent(), spacing) else block
+    override fun getSubBlocks(): List<Block> = children
 
     override fun getIndent(): Indent = ownIndent
 
-    override fun getSpacing(child1: Block?, child2: Block): Spacing? = spacing.getSpacing(this, child1, child2)
+    override fun getWrap(): Wrap? = null
 
-    override fun isLeaf(): Boolean = node.firstChildNode == null
+    override fun getAlignment(): Alignment? = null
 
-    /** Pressing Enter inside a block indents; before a closing brace it does not. */
+    override fun getSpacing(child1: Block?, child2: Block): Spacing? =
+        spacing.getSpacing(this, child1, child2)
+
+    override fun isIncomplete(): Boolean = false
+
+    /** A single token has nothing inside it to lay out. */
+    override fun isLeaf(): Boolean = tokens.size == 1 && tokens.single().firstChildNode == null
+
+    /**
+     * A line typed inside this block belongs to this block's level.
+     *
+     * The step for the level itself is already carried by [ownIndent], so a new
+     * child adds nothing on top of it. Pressing Enter is answered before this by
+     * `AzoraLineIndentProvider`, which reads the line above rather than the tree.
+     */
     override fun getChildAttributes(newChildIndex: Int): ChildAttributes =
-        ChildAttributes(Indent.getNormalIndent(), null)
+        ChildAttributes(Indent.getNoneIndent(), null)
+
+    /**
+     * Splits this level into leaf blocks and one nested block per bracketed run.
+     *
+     * An opener with no partner - a half-typed line, or a fragment cut out of a
+     * larger file - still opens a level; it simply runs to the end of this one,
+     * which keeps the code that follows indented as the author wrote it instead
+     * of snapping it back to the margin.
+     */
+    private fun buildChildren(): List<Block> {
+        if (isLeaf) return emptyList()
+        val blocks = mutableListOf<Block>()
+        var index = 0
+        while (index < tokens.size) {
+            val token = tokens[index]
+            if (token.elementType !in OPENERS) {
+                blocks.add(leaf(token))
+                index++
+                continue
+            }
+            blocks.add(leaf(token))
+            val close = matchingCloser(index)
+            val innerEnd = close ?: tokens.size
+            if (innerEnd > index + 1) {
+                val inner = tokens.subList(index + 1, innerEnd)
+                blocks.add(
+                    AzoraBlock(
+                        inner,
+                        TextRange(inner.first().startOffset, inner.last().textRange.endOffset),
+                        Indent.getNormalIndent(),
+                        spacing,
+                    )
+                )
+            }
+            index = if (close != null) {
+                blocks.add(leaf(tokens[close]))
+                close + 1
+            } else {
+                innerEnd
+            }
+        }
+        return blocks
+    }
+
+    private fun leaf(token: ASTNode): Block =
+        AzoraBlock(listOf(token), token.textRange, Indent.getNoneIndent(), spacing)
+
+    /** The index of the bracket closing the one at [open], or `null` if it is unclosed. */
+    private fun matchingCloser(open: Int): Int? {
+        var depth = 0
+        for (index in open until tokens.size) {
+            when (tokens[index].elementType) {
+                in OPENERS -> depth++
+                in CLOSERS -> {
+                    depth--
+                    if (depth == 0) return index
+                }
+                else -> Unit
+            }
+        }
+        return null
+    }
 
     private companion object {
         val OPENERS = setOf(

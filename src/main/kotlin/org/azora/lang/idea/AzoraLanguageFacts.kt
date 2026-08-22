@@ -26,13 +26,27 @@ package org.azora.lang.idea
  */
 object AzoraLanguageFacts {
 
+    /**
+     * The compiler's own primitives: `__int`, `__uint`, `__float`.
+     *
+     * A pack cannot describe them - `Int<N: __uint>` needs a width before there
+     * is an `Int` to state one with - so they are written with the `__` that
+     * reserves them, and they read as the primitives they are rather than as
+     * symbols nobody was allowed to write.
+     */
+    val primitiveWords = setOf("__int", "__uint", "__float")
+
+    /** Those words without their `__`, which nothing else may be called. */
+    val primitiveWordStems = setOf("int", "uint", "float")
+
+
     /** The Azora language version this plugin's lexical model tracks. */
     const val LANGUAGE_VERSION = "0.0.5"
 
     /** Reserved declaration, binding, and namespace words in the compiler lexer. */
     val declarationKeywords = setOf(
         "var", "val", "let", "fin", "func", "pack", "enum", "variant", "impl", "spec", "typealias",
-        "prop", "ctor", "dtor", "oper", "annot", "bind", "graph", "realm", "scope", "macro", "test",
+        "prop", "ctor", "dtor", "oper", "annot", "bind", "graph", "scope", "macro", "test",
         "error", "import", "use",
     )
 
@@ -43,10 +57,26 @@ object AzoraLanguageFacts {
         "await", "delay", "as", "is", "with", "without", "assert", "trace", "panic",
     )
 
+    /**
+     * Control keywords that open a braced body when written as a statement.
+     *
+     * These are the constructs whose body is a *block* rather than a value, so
+     * a reader looks inside them for statements. Their expression twins - the
+     * `if` of `return if c { a } else { b }`, the `when` of `x = when v { … }` -
+     * are the same words in a position where a value is expected, which is why
+     * the distinction is made by position and not by this list.
+     */
+    val blockStatementHeads = setOf("if", "else", "for", "while", "loop", "when")
+
     /** Reserved words that alter declaration visibility or evaluation. */
     val modifierKeywords = setOf(
         "exposed", "protected", "confined", "inline", "deepinline", "noinline",
         "threadlocal", "lazy", "factory", "derive", "out", "react", "bridge", "solo",
+        // `direct spec Number { … }` - the spec's members belong to the type.
+        "direct",
+        // `scoped Type(args)` in a `graph` - one value per active scope. A word of
+        // its own, because `scope` declares a namespace.
+        "scoped",
     )
 
     /** Reserved words for allocation, ownership, and unsafe operations. */
@@ -62,10 +92,26 @@ object AzoraLanguageFacts {
     val literalKeywords = setOf("true", "false", "null")
 
     /**
+     * Doc tags whose first word names something the signature also names.
+     *
+     * `@param capacity` documents a parameter, so `capacity` is a reference and
+     * reads as one. `@return`, `@file` and `@since` are followed by prose, and
+     * singling out its first word would only suggest a link that is not there.
+     */
+    val docNamingTags = setOf("param", "member", "generic", "receiver", "throws")
+
+    /**
+     * The receiver a member is called on. It is the only name that may leave
+     * out its type in a receiver list - `[self&]` says the one thing that
+     * varies where `[self: Self&]` repeats the type being implemented.
+     */
+    const val receiverName = "self"
+
+    /**
      * Implicit receiver parameters. They remain identifiers in the lexer and
      * are styled semantically as parameters only where they are used.
      */
-    val implicitParameters = setOf("self", "it")
+    val implicitParameters = setOf(receiverName, "it")
 
     val hardKeywords = declarationKeywords + controlKeywords + modifierKeywords +
         memoryKeywords + reactiveKeywords + literalKeywords
@@ -81,6 +127,26 @@ object AzoraLanguageFacts {
     )
 
     val allCompletionKeywords = (hardKeywords + softKeywords).sorted()
+
+    /**
+     * Types the compiler provides itself.
+     *
+     * No `.az` source declares these, so the index cannot find them however
+     * fresh it is, and `Array<String>` in a signature read as an unknown word
+     * beside the `List<String>` on the next line. They come from the compiler
+     * rather than the stdlib, which is what makes them belong in this table -
+     * see [builtinAnnotations] for the same reasoning. Having no declaration
+     * also means there is nowhere for go-to-definition to go.
+     */
+    val builtinTypes = setOf(
+        "Array", "Self",
+        // The named widths are aliases of one parameterised integer: `Byte` is
+        // `Int<8>`. A width without a name is written as one - `Int<256>`.
+        "Int", "UInt", "Byte", "UByte", "Short", "UShort", "Long", "ULong",
+        "Cent", "UCent", "ISize", "USize",
+        "Half", "Float", "Double", "Quad",
+        "Bool", "Char", "String", "Unit", "Nothing", "Any",
+    ) + primitiveWords
 
     /**
      * Compiler-provided (`bridge annot`) annotations. These come from the

@@ -67,6 +67,8 @@ class AzoraSyntaxHighlighter : SyntaxHighlighterBase() {
             AzoraTokenTypes.LINE_COMMENT -> LINE_COMMENT_KEYS
             AzoraTokenTypes.BLOCK_COMMENT -> BLOCK_COMMENT_KEYS
             AzoraTokenTypes.DOC_COMMENT -> DOC_COMMENT_KEYS
+            AzoraTokenTypes.DOC_TAG -> DOC_TAG_KEYS
+            AzoraTokenTypes.DOC_TAG_VALUE -> DOC_TAG_VALUE_KEYS
 
             // Operators and punctuation
             AzoraTokenTypes.OPERATOR -> OPERATOR_KEYS
@@ -119,7 +121,7 @@ class AzoraSyntaxHighlighter : SyntaxHighlighterBase() {
         /** A loop label and the same label after `break:` / `continue:`. */
         val LOOP_LABEL = key("AZORA_LOOP_LABEL", AzoraPalette.fg(AzoraPalette.LABEL))
 
-        /** Named types: packs, enums, errors, specs, realms, and aliases. */
+        /** Named types: packs, enums, errors, specs, scopes, and aliases. */
         val TYPE_NAME = key("AZORA_TYPE_NAME", AzoraPalette.fg(AzoraPalette.TYPE))
 
         /** The name in a type declaration (`pack ‹Point›`). */
@@ -128,8 +130,21 @@ class AzoraSyntaxHighlighter : SyntaxHighlighterBase() {
         /** A spec declaration or reference. */
         val SPEC_TYPE = key("AZORA_SPEC_TYPE", AzoraPalette.italic(AzoraPalette.TYPE))
 
-        /** A realm path segment, including every segment around `::`. */
+        /** A scope path segment, including every segment around `::`. */
         val ZONE_USAGE = key("AZORA_ZONE_USAGE", AzoraPalette.italic(AzoraPalette.FOREGROUND))
+
+        /**
+         * The `*` that stands for "everything here" - `std.io::*`,
+         * `derive Ignore for Fixture::*`.
+         *
+         * The [AzoraPalette.SECONDARY] blue, like a loop label and a `${…}`
+         * hole: all three are marks *about* the code rather than code, and this
+         * one is the only `*` that is not multiplication.
+         */
+        val WILDCARD = key("AZORA_WILDCARD", AzoraPalette.bold(AzoraPalette.SECONDARY))
+
+        /** A macro hole - `$items` in `[...$items] => List(...$items)`. */
+        val MACRO_HOLE = key("AZORA_MACRO_HOLE", AzoraPalette.bold(AzoraPalette.MACRO_HOLE))
 
         /** A segment of an `import` module path. */
         val MODULE_PATH = key("AZORA_MODULE_PATH", AzoraPalette.italic(AzoraPalette.FOREGROUND))
@@ -149,53 +164,82 @@ class AzoraSyntaxHighlighter : SyntaxHighlighterBase() {
             AzoraPalette.italicUnderlined(AzoraPalette.FUNCTION),
         )
 
-        /** Function/constructor parameters. */
-        val PARAMETER = key("AZORA_PARAMETER", AzoraPalette.underlined(AzoraPalette.FOREGROUND))
+        /** Function/constructor parameters - the light grey-blue of a handed-over value. */
+        val PARAMETER = key("AZORA_PARAMETER", AzoraPalette.fg(AzoraPalette.PARAMETER))
+
+        /**
+         * A context receiver parameter - the `[self&, scope: Scope&]` a `func`
+         * or `prop` declares before its own parameter list.
+         */
+        val CONTEXT_PARAMETER = key(
+            "AZORA_CONTEXT_PARAMETER",
+            AzoraPalette.fg(AzoraPalette.CONTEXT_PARAMETER),
+        )
 
         /** Pack fields and computed properties accessed through a receiver. */
         val FIELD = key("AZORA_FIELD", AzoraPalette.fg(AzoraPalette.FOREGROUND))
 
-        /** A computed property declaration. */
-        val PROPERTY = key("AZORA_PROPERTY", AzoraPalette.italicUnderlined(AzoraPalette.FOREGROUND))
+        /**
+         * A case of an `enum`, both where it is declared and where it is named.
+         *
+         * A case is a value the type spells out rather than one computed at run
+         * time, and the italic is what says so — the same mark [SPEC_TYPE]
+         * wears for the same reason.
+         */
+        val ENUM_CASE = key("AZORA_ENUM_CASE", AzoraPalette.italic(AzoraPalette.FOREGROUND))
 
-        /** A property declared by a spec. */
-        val SPEC_PROPERTY = key("AZORA_SPEC_PROPERTY", AzoraPalette.italic(AzoraPalette.FOREGROUND))
+        /** A case of an `error` declaration - [ENUM_CASE] in the failure red. */
+        val ERROR_CASE = key("AZORA_ERROR_CASE", AzoraPalette.italic(AzoraPalette.ERROR_CASE))
+
+        /**
+         * A computed property declaration - italic, underlined.
+         *
+         * The italic is what a `prop` name wears everywhere it appears: the
+         * declaration, the read, the spec that asks for it and the `impl` that
+         * answers. It stands for the same thing an [ENUM_CASE]'s italic does -
+         * a name that is not a plain slot in memory. The underline says the
+         * name is a member a reader may go and read, where a parameter is a
+         * value already in front of them.
+         */
+        val PROPERTY = key("AZORA_PROPERTY", AzoraPalette.italicUnderlined(AzoraPalette.PROPERTY))
+
+        /** Reading a computed property through a receiver - the call side of [PROPERTY]. */
+        val PROPERTY_CALL = key("AZORA_PROPERTY_CALL", AzoraPalette.italicUnderlined(AzoraPalette.PROPERTY))
+
+        /**
+         * A property declared by a spec.
+         *
+         * Once the italic belongs to every `prop` name, it can no longer say
+         * "spec member" here the way [SPEC_FUNCTION]'s does: a property reads
+         * the same wherever it is declared, which is what a reader asked for.
+         * The key stays its own so a scheme can still tell the two apart.
+         */
+        val SPEC_PROPERTY = key("AZORA_SPEC_PROPERTY", AzoraPalette.italicUnderlined(AzoraPalette.PROPERTY))
 
         /** A spec property implemented by an `impl ... for ...` block. */
         val OVERRIDE_PROPERTY = key(
             "AZORA_OVERRIDE_PROPERTY",
-            AzoraPalette.italicUnderlined(AzoraPalette.FOREGROUND),
+            AzoraPalette.italicUnderlined(AzoraPalette.PROPERTY),
         )
 
-        /** An unused declaration. */
-        val UNUSED = key("AZORA_UNUSED", AzoraPalette.fg(AzoraPalette.UNUSED))
-
-        /** An unused parameter. */
-        val UNUSED_PARAMETER = key(
-            "AZORA_UNUSED_PARAMETER",
-            AzoraPalette.underlined(AzoraPalette.UNUSED),
-        )
-
-        /** An unused property. */
-        val UNUSED_PROPERTY = key(
-            "AZORA_UNUSED_PROPERTY",
-            AzoraPalette.italicUnderlined(AzoraPalette.UNUSED),
-        )
-
-        /** An unused callable/property declared by a spec. */
-        val UNUSED_SPEC_MEMBER = key(
-            "AZORA_UNUSED_SPEC_MEMBER",
-            AzoraPalette.italic(AzoraPalette.UNUSED),
-        )
-
-        /** An unused spec implementation member. */
-        val UNUSED_OVERRIDE_MEMBER = key(
-            "AZORA_UNUSED_OVERRIDE_MEMBER",
-            AzoraPalette.italicUnderlined(AzoraPalette.UNUSED),
-        )
+        // A declaration nothing names has no colour of its own. A colour says
+        // what a name *is* - a `func` is the function blue whether or not this
+        // file happens to hold its caller - and the annotator's warning is where
+        // "nothing uses this" belongs, because that is a claim about the project
+        // rather than about the name.
 
         /** An identifier narrowed by a smart cast (`is` / `guard is`). */
         val SMART_CAST = key("AZORA_SMART_CAST", AzoraPalette.background(AzoraPalette.SMART_CAST_BACKGROUND))
+
+        /**
+         * A name whose declaration carries `@Deprecated`, struck through.
+         *
+         * Layered over whatever the name already reads as: a deprecated `func`
+         * is still function-blue, and the strike is the whole message. It
+         * applies wherever the name is written, because the declaration is
+         * what deprecates it, not the place that mentions it.
+         */
+        val DEPRECATED = key("AZORA_DEPRECATED", AzoraPalette.struckThrough())
 
         // ── Literals ───────────────────────────────────────────────────
 
@@ -219,8 +263,17 @@ class AzoraSyntaxHighlighter : SyntaxHighlighterBase() {
         /** Block comments. */
         val BLOCK_COMMENT = key("AZORA_BLOCK_COMMENT", AzoraPalette.italic(AzoraPalette.COMMENT))
 
-        /** Documentation comments (`///`, `/** … */`). */
-        val DOC_COMMENT = key("AZORA_DOC_COMMENT", AzoraPalette.italic(AzoraPalette.COMMENT))
+        /**
+         * Documentation comments (`/** … */`) - the string green, taken down a
+         * step, because a doc comment describes code rather than being code.
+         */
+        val DOC_COMMENT = key("AZORA_DOC_COMMENT", AzoraPalette.italic(AzoraPalette.DOC))
+
+        /** A doc tag (`@param`, `@return`) - the same green as a string literal. */
+        val DOC_TAG = key("AZORA_DOC_TAG", AzoraPalette.italic(AzoraPalette.STRING))
+
+        /** The name a doc tag documents (`capacity` in `@param capacity`). */
+        val DOC_TAG_VALUE = key("AZORA_DOC_TAG_VALUE", AzoraPalette.italic(AzoraPalette.DOC_TAG_VALUE))
 
         // ── Operators and punctuation ──────────────────────────────────
 
@@ -289,6 +342,8 @@ class AzoraSyntaxHighlighter : SyntaxHighlighterBase() {
         private val LINE_COMMENT_KEYS = arrayOf(LINE_COMMENT)
         private val BLOCK_COMMENT_KEYS = arrayOf(BLOCK_COMMENT)
         private val DOC_COMMENT_KEYS = arrayOf(DOC_COMMENT)
+        private val DOC_TAG_KEYS = arrayOf(DOC_TAG)
+        private val DOC_TAG_VALUE_KEYS = arrayOf(DOC_TAG_VALUE)
         private val OPERATOR_KEYS = arrayOf(OPERATOR)
         private val DECORATOR_KEYS = arrayOf(DECORATOR)
         private val MACRO_KEYS = arrayOf(MACRO)

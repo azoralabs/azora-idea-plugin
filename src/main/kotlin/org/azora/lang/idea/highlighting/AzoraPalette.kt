@@ -31,6 +31,15 @@ import java.awt.Font
  * counterpart of the same hue, wrapped in a [JBColor] so a single key definition
  * renders correctly under both IDE themes. These are *defaults*: users can
  * override any of them under **Editor | Color Scheme | Azora**.
+ *
+ * **A syntax colour is a design token, not a judgement.** The dark tone of an
+ * entry that colours code is `--color-pastel-*` from
+ * `azora-lang-code-website/src/index.css` verbatim; only the light counterparts
+ * are computed, by holding the hue and dropping the lightness. Where an editor
+ * role has no token of its own — a macro hole, a receiver, a doc comment — the
+ * tone is derived from the nearest token and says so. Nothing here is picked by
+ * eye: lightening a pastel "so calls read brighter" is what put a blue in the
+ * editor that no other Azora surface uses.
  */
 object AzoraPalette {
 
@@ -56,6 +65,15 @@ object AzoraPalette {
     /** Decorators and decorator declarations — pastel yellow. */
     val DECORATOR = pair(0x8A6A0A, 0xE6C96B)
 
+    /**
+     * Macro holes (`$items`, `$key`) — dark gold, derived from `--color-pastel-yellow`.
+     *
+     * Deeper than [DECORATOR]'s pastel yellow, which it sits beside in hue: a
+     * hole is a *slot* in a pattern rather than a name, and reads as the one
+     * thing in a macro body that will not be there after expansion.
+     */
+    val MACRO_HOLE = pair(0x7A5C08, 0xC49A2E)
+
     /** Strings and char literals — pastel green. */
     val STRING = pair(0x3C7C4C, 0x7DBF8A)
 
@@ -65,20 +83,91 @@ object AzoraPalette {
     /** Comments — neutral grey, italic. */
     val COMMENT = pair(0x8A8A8A, 0x676767)
 
+    /**
+     * Documentation comments — `--color-pastel-green` taken down a step.
+     *
+     * A doc comment is prose about the code rather than code, so it sits below
+     * the literals it shares a hue with: darker in the light theme, less bright
+     * in the dark one. Its tags read at full [STRING] strength, which is what
+     * makes `@param` stand out from the sentence around it.
+     */
+    val DOC = pair(0x2F6138, 0x5E9068)
+
+    /** The name a doc tag documents (`capacity` in `@param capacity`) — `--color-az-35`. */
+    val DOC_TAG_VALUE = pair(0x777777, 0xC4C4C4)
+
     /** Ordinary identifiers, numbers, operators and punctuation. */
     val FOREGROUND = pair(0x262626, 0xD9DADA)
 
-    /** Functions use the ordinary foreground; callability comes from context, not hue. */
-    val FUNCTION = FOREGROUND
+    /**
+     * Functions, declared and called — `--color-pastel-blue`.
+     *
+     * The syntax colours come from the pastel family and nowhere else; this one
+     * was briefly lightened to `#7FBBEF` to sit above [SECONDARY], which put a
+     * blue in the editor that the design system does not contain. [LABEL] keeps
+     * the brand blue instead, so the two stay apart without inventing a tone.
+     */
+    val FUNCTION = pair(0x2E6FA8, 0x5BA3D0)
 
-    /** Unused declarations and parameters. */
-    val UNUSED = pair(0x6D6D6D, 0xB8B8B8)
+    /**
+     * Computed properties, declared and read — [FOREGROUND], worn italic.
+     *
+     * It was briefly taken a step brighter than [FOREGROUND] on the reasoning
+     * that a member should read above a local, which only made `prop` names the
+     * whitest thing on the line. A property is a name like any other, so it
+     * takes the ordinary identifier tone; the italic and the underline are what
+     * say which kind of name it is.
+     */
+    val PROPERTY = FOREGROUND
 
-    /** Generic type parameters — pastel orange. */
-    val TYPE_PARAMETER = pair(0xA65310, 0xE8944A)
+    /**
+     * Function and constructor parameters — a light grey-blue.
+     *
+     * They wore the gold [MACRO_HOLE] wears, which read as a second kind of
+     * hole in every signature and left the gold saying two things. A parameter
+     * is a value the call site hands over: it sits a step off [FOREGROUND],
+     * cool rather than warm, and takes no colour any other role needs.
+     */
+    val PARAMETER = pair(0x4B5A6A, 0xA9B7C6)
 
-    /** Loop labels and their jump targets — blue. */
-    val LABEL = pair(0x2A6FC4, 0x4E93EA)
+    /**
+     * Context receiver parameters — the landing site's `--color-pastel-orange`,
+     * underlined.
+     *
+     * A receiver is a value, and this orange is its own: no other role wears
+     * it. It has no token in the playground's set, which spells a receiver as
+     * plain foreground.
+     */
+    val CONTEXT_PARAMETER = pair(0xA65310, 0xE8944A)
+
+    /**
+     * Generic type parameters — the [MACRO] purple.
+     *
+     * A `T` and a macro are the same kind of thing to a reader: a stand-in that
+     * something else will fill. It had an orange-red of its own, next to
+     * [CONTEXT_PARAMETER]'s, which said only that it was near a receiver.
+     */
+    val TYPE_PARAMETER = MACRO
+
+    /**
+     * The cases of an `error` declaration — a red of its own.
+     *
+     * Redder than the pastel red it started from. A case of an `error` is the
+     * one name in a declaration that says something went wrong, and the muted
+     * tone left it reading as a variant like any other. [ERROR]'s brighter red
+     * still separates a diagnostic that has to shout from a case that is
+     * simply named.
+     */
+    val ERROR_CASE = pair(0xA81F29, 0xE05C63)
+
+    /**
+     * Loop labels and their jump targets — the [SECONDARY] brand blue.
+     *
+     * A label is a mark *about* the code rather than code, which is what it
+     * shares with a `${…}` hole and a string escape: all three wear the brand
+     * blue, leaving the pastel blue to [FUNCTION] alone.
+     */
+    val LABEL = SECONDARY
 
     /** Invalid / unrecognized input. */
     val INVALID = pair(0xC1121F, 0xE63946)
@@ -115,6 +204,17 @@ object AzoraPalette {
     /** Italic foreground with a solid underline. */
     fun italicUnderlined(color: JBColor): TextAttributes =
         underlined(color, Font.ITALIC)
+
+    /**
+     * A strike through the text, and nothing else.
+     *
+     * No foreground: this is layered *over* whatever colour the name already
+     * has, so a deprecated `func` stays function-blue and reads as struck
+     * through. Giving it a colour of its own would say "deprecated" twice and
+     * lose what the name is.
+     */
+    fun struckThrough(): TextAttributes =
+        TextAttributes(null, null, null, EffectType.STRIKEOUT, Font.PLAIN)
 
     /** Foreground colour with a wavy underline, used for diagnostics. */
     fun wavy(color: JBColor): TextAttributes =

@@ -18,7 +18,7 @@ class AzoraMacroScannerTest {
     fun `finds prefix block macros`() {
         val macros = AzoraMacroScanner.scan(
             """
-            realm std {
+            scope std {
                 macro @vec {
                     [] => std::emptyList()
                     [...${'$'}items] => std::listOf(...${'$'}items)

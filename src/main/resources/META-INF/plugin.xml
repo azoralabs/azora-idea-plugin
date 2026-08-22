@@ -23,6 +23,8 @@
     <depends>com.intellij.modules.platform</depends>
 
     <extensions defaultExtensionNs="com.intellij">
+        <!-- The source, and beside it the IR the compiler makes of it. -->
+        <fileEditorProvider implementation="org.azora.lang.idea.preview.AzoraSplitEditorProvider"/>
         <!-- ── Azora language ──────────────────────────────────────── -->
 
         <fileType
@@ -80,6 +82,18 @@
         <gotoDeclarationHandler
             implementation="org.azora.lang.idea.navigation.AzoraGoToDeclarationHandler"/>
 
+        <!-- Optimize Imports: `import path.*` becomes the selection it stands for -->
+        <lang.importOptimizer
+            language="Azora"
+            implementationClass="org.azora.lang.idea.symbol.AzoraImportOptimizer"/>
+
+        <!-- Alt-Enter on a name that exists but is not imported here -->
+        <intentionAction>
+            <language>Azora</language>
+            <className>org.azora.lang.idea.annotator.AzoraImportIntention</className>
+            <category>Azora</category>
+        </intentionAction>
+
         <lang.documentationProvider
             language="Azora"
             implementationClass="org.azora.lang.idea.documentation.AzoraDocumentationProvider"/>
@@ -95,6 +109,9 @@
             implementationClass="org.azora.lang.idea.hints.AzoraTypeHintProvider"/>
 
         <!-- Editing -->
+        <highlightUsagesHandlerFactory
+            implementation="org.azora.lang.idea.highlighting.AzoraGroupPairHighlighterFactory"/>
+
         <lang.braceMatcher
             language="Azora"
             implementationClass="org.azora.lang.idea.AzoraBraceMatcher"/>

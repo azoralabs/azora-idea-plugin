@@ -68,27 +68,28 @@ class AzoraColorSettingsPage : ColorSettingsPage {
             AttributesDescriptor("Identifiers//Type declaration", AzoraSyntaxHighlighter.TYPE_DECLARATION),
             AttributesDescriptor("Identifiers//Spec type", AzoraSyntaxHighlighter.SPEC_TYPE),
             AttributesDescriptor("Identifiers//Type parameter", AzoraSyntaxHighlighter.TYPE_PARAMETER),
-            AttributesDescriptor("Identifiers//Realm path", AzoraSyntaxHighlighter.ZONE_USAGE),
+            AttributesDescriptor("Identifiers//Scope path", AzoraSyntaxHighlighter.ZONE_USAGE),
             AttributesDescriptor("Identifiers//Import path", AzoraSyntaxHighlighter.MODULE_PATH),
+            AttributesDescriptor("Identifiers//Wildcard", AzoraSyntaxHighlighter.WILDCARD),
             AttributesDescriptor("Identifiers//Loop label", AzoraSyntaxHighlighter.LOOP_LABEL),
             AttributesDescriptor("Identifiers//Function call", AzoraSyntaxHighlighter.FUNCTION_CALL),
             AttributesDescriptor("Identifiers//Function declaration", AzoraSyntaxHighlighter.FUNCTION_DECLARATION),
             AttributesDescriptor("Identifiers//Spec function", AzoraSyntaxHighlighter.SPEC_FUNCTION),
             AttributesDescriptor("Identifiers//Override function", AzoraSyntaxHighlighter.OVERRIDE_FUNCTION),
             AttributesDescriptor("Identifiers//Parameter", AzoraSyntaxHighlighter.PARAMETER),
+            AttributesDescriptor("Identifiers//Context receiver parameter", AzoraSyntaxHighlighter.CONTEXT_PARAMETER),
             AttributesDescriptor("Identifiers//Field", AzoraSyntaxHighlighter.FIELD),
+            AttributesDescriptor("Identifiers//Enum case", AzoraSyntaxHighlighter.ENUM_CASE),
+            AttributesDescriptor("Identifiers//Error case", AzoraSyntaxHighlighter.ERROR_CASE),
             AttributesDescriptor("Identifiers//Property", AzoraSyntaxHighlighter.PROPERTY),
+            AttributesDescriptor("Identifiers//Property read", AzoraSyntaxHighlighter.PROPERTY_CALL),
             AttributesDescriptor("Identifiers//Spec property", AzoraSyntaxHighlighter.SPEC_PROPERTY),
             AttributesDescriptor("Identifiers//Override property", AzoraSyntaxHighlighter.OVERRIDE_PROPERTY),
-            AttributesDescriptor("Identifiers//Unused declaration", AzoraSyntaxHighlighter.UNUSED),
-            AttributesDescriptor("Identifiers//Unused parameter", AzoraSyntaxHighlighter.UNUSED_PARAMETER),
-            AttributesDescriptor("Identifiers//Unused property", AzoraSyntaxHighlighter.UNUSED_PROPERTY),
-            AttributesDescriptor("Identifiers//Unused spec member", AzoraSyntaxHighlighter.UNUSED_SPEC_MEMBER),
-            AttributesDescriptor("Identifiers//Unused override member", AzoraSyntaxHighlighter.UNUSED_OVERRIDE_MEMBER),
             AttributesDescriptor("Identifiers//Smart cast", AzoraSyntaxHighlighter.SMART_CAST),
 
             // Macros
             AttributesDescriptor("Macros//Macro", AzoraSyntaxHighlighter.MACRO),
+            AttributesDescriptor("Macros//Macro hole", AzoraSyntaxHighlighter.MACRO_HOLE),
 
             // Literals
             AttributesDescriptor("Literals//Number", AzoraSyntaxHighlighter.NUMBER),
@@ -100,6 +101,8 @@ class AzoraColorSettingsPage : ColorSettingsPage {
             AttributesDescriptor("Comments//Line comment", AzoraSyntaxHighlighter.LINE_COMMENT),
             AttributesDescriptor("Comments//Block comment", AzoraSyntaxHighlighter.BLOCK_COMMENT),
             AttributesDescriptor("Comments//Doc comment", AzoraSyntaxHighlighter.DOC_COMMENT),
+            AttributesDescriptor("Comments//Doc tag", AzoraSyntaxHighlighter.DOC_TAG),
+            AttributesDescriptor("Comments//Doc tag name", AzoraSyntaxHighlighter.DOC_TAG_VALUE),
 
             // Operators and punctuation
             AttributesDescriptor("Operators and Punctuation//Operator", AzoraSyntaxHighlighter.OPERATOR),
@@ -124,10 +127,13 @@ class AzoraColorSettingsPage : ColorSettingsPage {
             "macro" to AzoraSyntaxHighlighter.MACRO,
             "type" to AzoraSyntaxHighlighter.TYPE_NAME,
             "typeParam" to AzoraSyntaxHighlighter.TYPE_PARAMETER,
+            "ctxParam" to AzoraSyntaxHighlighter.CONTEXT_PARAMETER,
+            "propRead" to AzoraSyntaxHighlighter.PROPERTY_CALL,
             "typeDecl" to AzoraSyntaxHighlighter.TYPE_DECLARATION,
             "specType" to AzoraSyntaxHighlighter.SPEC_TYPE,
             "zoneUsage" to AzoraSyntaxHighlighter.ZONE_USAGE,
             "modulePath" to AzoraSyntaxHighlighter.MODULE_PATH,
+            "wildcard" to AzoraSyntaxHighlighter.WILDCARD,
             "label" to AzoraSyntaxHighlighter.LOOP_LABEL,
             "call" to AzoraSyntaxHighlighter.FUNCTION_CALL,
             "funcDecl" to AzoraSyntaxHighlighter.FUNCTION_DECLARATION,
@@ -135,11 +141,11 @@ class AzoraColorSettingsPage : ColorSettingsPage {
             "overrideFunc" to AzoraSyntaxHighlighter.OVERRIDE_FUNCTION,
             "param" to AzoraSyntaxHighlighter.PARAMETER,
             "field" to AzoraSyntaxHighlighter.FIELD,
+            "enumCase" to AzoraSyntaxHighlighter.ENUM_CASE,
+            "errorCase" to AzoraSyntaxHighlighter.ERROR_CASE,
             "property" to AzoraSyntaxHighlighter.PROPERTY,
             "specProperty" to AzoraSyntaxHighlighter.SPEC_PROPERTY,
             "overrideProperty" to AzoraSyntaxHighlighter.OVERRIDE_PROPERTY,
-            "unused" to AzoraSyntaxHighlighter.UNUSED,
-            "unusedParam" to AzoraSyntaxHighlighter.UNUSED_PARAMETER,
             "smartCast" to AzoraSyntaxHighlighter.SMART_CAST,
             "error" to AzoraSyntaxHighlighter.ERROR,
             "warning" to AzoraSyntaxHighlighter.WARNING,
@@ -152,9 +158,17 @@ class AzoraColorSettingsPage : ColorSettingsPage {
             module <modulePath>example</modulePath>.<modulePath>app</modulePath>
 
             import <modulePath>std</modulePath>.<modulePath>math</modulePath>
-            import <modulePath>std</modulePath>.<modulePath>reflection</modulePath>
+            import <modulePath>std</modulePath>.<modulePath>io</modulePath>::<wildcard>*</wildcard>
+            import <modulePath>std</modulePath>.<modulePath>container</modulePath>.[<modulePath>list</modulePath>, <modulePath>map</modulePath>]
+            import <modulePath>std</modulePath>.<modulePath>format</modulePath>::[<type>Display</type>]
 
-            /** A point in two dimensions. */
+            /**
+             * A point in two dimensions.
+             *
+             * @param x The horizontal offset.
+             * @param y The vertical offset.
+             * @return The point that was built.
+             */
             @Stable(since: "0.1")
             pack <typeDecl>Point</typeDecl> {
                 var <field>x</field>: <type>std::Double</type> = 0.0
@@ -164,13 +178,13 @@ class AzoraColorSettingsPage : ColorSettingsPage {
             annot <typeDecl>Serializable</typeDecl>
 
             variant enum <typeDecl>Shape</typeDecl> {
-                Circle(radius: <type>std::Double</type>)
-                Rectangle(width: <type>std::Double</type> height: <type>std::Double</type>)
+                <enumCase>Circle</enumCase>(radius: <type>std::Double</type>)
+                <enumCase>Rectangle</enumCase>(width: <type>std::Double</type> height: <type>std::Double</type>)
             }
 
             error <typeDecl>NetworkError</typeDecl> {
-                Timeout
-                NotFound
+                <errorCase>Timeout</errorCase>
+                <errorCase>NotFound</errorCase>
             }
 
             macro @buildPoint {
@@ -179,23 +193,25 @@ class AzoraColorSettingsPage : ColorSettingsPage {
             macro ${'$'}left @to ${'$'}right => pair(${ '$' }left ${ '$' }right)
 
             impl <type>Point</type> {
-                react ctor[<param>self</param>: Self!](
+                react ctor[<ctxParam>self</ctxParam>: Self!](
                     <param>x</param>: <type>std::Double</type>
                     <param>y</param>: <type>std::Double</type>
                 ) {
-                    <param>self</param>.<field>x</field> = <param>x</param>
-                    <param>self</param>.<field>y</field> = <param>y</param>
+                    <ctxParam>self</ctxParam>.<field>x</field> = <param>x</param>
+                    <ctxParam>self</ctxParam>.<field>y</field> = <param>y</param>
                 }
 
-                func <funcDecl>distanceTo</funcDecl>[<param>self</param>: Self&](
+                prop <property>magnitude</property>[<ctxParam>self</ctxParam>: Self&]: <type>Double</type> = <ctxParam>self</ctxParam>.<field>x</field>
+
+                func <funcDecl>distanceTo</funcDecl>[<ctxParam>self</ctxParam>: Self&](
                     <param>other</param>: <type>Point</type>
-                ): <type>std::Double</type> {
-                    fin dx = <param>other</param>.<field>x</field> - <param>self</param>.<field>x</field>
-                    return dx * dx
+                ): <type>Double</type> {
+                    fin dx = <param>other</param>.<field>x</field> - <ctxParam>self</ctxParam>.<field>x</field>
+                    return dx * dx + <ctxParam>self</ctxParam>.<propRead>magnitude</propRead>
                 }
             }
 
-            realm <zoneUsage>ide</zoneUsage>::<zoneUsage>editor</zoneUsage> {
+            scope <zoneUsage>ide</zoneUsage>::<zoneUsage>editor</zoneUsage> {
                 react func <funcDecl>render</funcDecl><<typeParam>T</typeParam>>(
                     <param>value</param>: <typeParam>T</typeParam>
                 ) {
@@ -212,8 +228,8 @@ class AzoraColorSettingsPage : ColorSettingsPage {
             }
 
             func <funcDecl>main</funcDecl>() {
-                fin <unused>unusedValue</unused> = 1
-                <call>ide::editor::render</call>(Shape.Circle(5.0))
+                fin unusedValue = 1
+                <call>ide::editor::render</call>(<type>Shape</type>.<enumCase>Circle</enumCase>(5.0))
             }
 
             // Exact diagnostics use wavy underlines.

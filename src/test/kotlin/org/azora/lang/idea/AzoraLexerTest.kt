@@ -51,7 +51,7 @@ class AzoraLexerTest {
     @Test
     fun `declaration keywords are classified correctly`() {
         val keywords = listOf(
-            "func", "pack", "enum", "variant", "error", "impl", "realm", "scope",
+            "func", "pack", "enum", "variant", "error", "impl", "scope",
             "var", "val", "let", "fin", "spec", "annot", "graph", "macro",
         )
         for (kw in keywords) {
@@ -72,7 +72,7 @@ class AzoraLexerTest {
     fun `current language vocabulary is classified`() {
         val expected = mapOf(
             "val" to AzoraTokenTypes.DECLARATION_KEYWORD,
-            "realm" to AzoraTokenTypes.DECLARATION_KEYWORD,
+            "scope" to AzoraTokenTypes.DECLARATION_KEYWORD,
             "variant" to AzoraTokenTypes.DECLARATION_KEYWORD,
             "annot" to AzoraTokenTypes.DECLARATION_KEYWORD,
             "graph" to AzoraTokenTypes.DECLARATION_KEYWORD,
@@ -94,6 +94,68 @@ class AzoraLexerTest {
         assertEquals(AzoraTokenTypes.IDENTIFIER, tokenizeFiltered("value.union(other)").first { it.second == "union" }.first)
         assertEquals(AzoraTokenTypes.DECLARATION_KEYWORD, tokenizeFiltered("unsafe union Result {}").first { it.second == "union" }.first)
         assertEquals(AzoraTokenTypes.IDENTIFIER, tokenizeFiltered("mod std.math").first { it.second == "mod" }.first)
+    }
+
+    @Test
+    fun `only the top of the file is a restart point`() {
+        // The editor relexes from the last boundary whose state was the initial
+        // one. Every token here is decided by what precedes it, so saying "zero"
+        // anywhere else invited a relex from the middle of a doc comment - and
+        // its lines came back coloured as code.
+        val source = "/** Doc.\n * @param x A number.\n */\nfunc f(x: Int) {}"
+        val lexer = AzoraLexerAdapter()
+        lexer.start(source, 0, source.length, 0)
+
+        assertEquals(0, lexer.state, "the first token restarts from the initial state")
+        var insideDoc = 0
+        while (lexer.tokenType != null) {
+            if (lexer.tokenStart > 0) {
+                assertNotEquals(0, lexer.state, "restarting at ${lexer.tokenStart} would lose context")
+            }
+            if (lexer.tokenType == AzoraTokenTypes.DOC_TAG) insideDoc++
+            lexer.advance()
+        }
+        assertEquals(1, insideDoc, "the doc comment's tag is still lexed as a tag")
+    }
+
+    @Test
+    fun `a doc comment relexed from the top keeps its prose`() {
+        // The same text, asked for from an offset inside the comment: the
+        // tokens come from a pass that saw the opening, not from the fragment.
+        val source = "/** Doc.\n * @param x A number.\n */\nfunc f(x: Int) {}"
+        val insideComment = source.indexOf("@param")
+        val lexer = AzoraLexerAdapter()
+        lexer.start(source, insideComment, source.length, 0)
+
+        val first = lexer.tokenType
+        assertTrue(
+            first == AzoraTokenTypes.DOC_TAG || first == AzoraTokenTypes.DOC_COMMENT,
+            "a tag inside a doc comment is doc, not code: was $first",
+        )
+    }
+
+    @Test
+    fun `a keyword before a splice is still a keyword`() {
+        // `bridge oper$op` is the keyword and the name spliced after it, not
+        // one long word.
+        val tokens = tokenizeFiltered("bridge oper${'$'}op [self&](rhs: Self&): Self")
+
+        assertEquals(AzoraTokenTypes.DECLARATION_KEYWORD, tokens.first { it.second == "oper" }.first)
+        assertEquals(AzoraTokenTypes.IDENTIFIER, tokens.first { it.second == "${'$'}op" }.first)
+    }
+
+    @Test
+    fun `binds is a keyword on a decorator header`() {
+        // The header is `annot @Name`, sigil and all, and `binds` belongs to it.
+        val source = "annot @AzonSerializable for .Pack binds AzonSerializer {"
+        assertEquals(
+            AzoraTokenTypes.CONTROL_KEYWORD,
+            tokenizeFiltered(source).first { it.second == "binds" }.first,
+        )
+        assertEquals(
+            AzoraTokenTypes.IDENTIFIER,
+            tokenizeFiltered("value.binds(other)").first { it.second == "binds" }.first,
+        )
     }
 
     @Test
@@ -248,6 +310,37 @@ class AzoraLexerTest {
                 tokenizeFiltered(source).filter { it.second == "derives" }
                     .all { it.first == AzoraTokenTypes.IDENTIFIER },
                 "`derives` must remain an identifier in: $source",
+            )
+        }
+    }
+
+    @Test
+    fun `where survives an arrow in the signature above it`() {
+        // `(T) -> K` - the `>` of an arrow closes nothing. Counted as an angle
+        // bracket it left `<T, K>` unbalanced, and `where` lost its colour on
+        // every signature carrying a callable parameter.
+        val source = "func sortBy<T, K>(arr: Array<T>, key: (T) -> K): Array<T> where K: Order"
+
+        assertEquals(
+            AzoraTokenTypes.CONTROL_KEYWORD,
+            tokenizeFiltered(source).single { it.second == "where" }.first,
+        )
+    }
+
+    @Test
+    fun `derives follows a literal pack and may open its own line`() {
+        // `std/primitive.az` writes every width this way: the declaration says
+        // which literal it is written as, and the clause is too long to follow
+        // on the same line.
+        for (source in listOf(
+            "bridge pack Int<N: __uint = 32>(__int) derives [Integer, SignedInteger]",
+            "bridge pack Int<N: __uint = 32>(__int)\nderives [Integer, SignedInteger]",
+            "@Since(\"0.1\")\nbridge pack Quad(__float)\n    derives [FloatingPoint]",
+        )) {
+            assertEquals(
+                AzoraTokenTypes.CONTROL_KEYWORD,
+                tokenizeFiltered(source).single { it.second == "derives" }.first,
+                "`derives` must be the keyword in: $source",
             )
         }
     }

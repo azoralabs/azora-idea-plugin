@@ -1,5 +1,55 @@
 # Changelog
 
+## 0.0.8
+
+### Two new views
+
+- The IR beside the source. An `.az` file opens as an editor with a preview, the way a Markdown file does, showing what the compiler makes of it in two tabs: **IR** and **Optimized IR**. It refreshes shortly after typing stops, from the buffer as it stands rather than its last save, and shows only *this file's* declarations - a full dump is mostly the standard library the file reached. The compiler is asked rather than imitated, so the pane never disagrees with a build.
+- Doc comments render in place. A `/** … */` is drawn as formatted text and turns back into source the moment the caret enters it (*Editor | General | Appearance | Render documentation comments*). The licence header at the top of a file now folds by default, as it does in every other language.
+
+### Imports
+
+- One reader for the whole import grammar, so completion, navigation, Optimize Imports and highlighting agree. A group written across several lines, or with a comment in it, is now read correctly; before, everything it selected was uncoloured and unnavigable.
+- **Optimize Imports** narrows `import path::*` to what the file actually uses. It never touches an explicit import, and leaves a wildcard alone when the index knows nothing about its module - silently dropping a dependency is the failure nobody notices.
+- Completion offers names that are not imported yet, tagged with the module that declares them, and writes the import in the same keystroke. Alt-Enter does the same for a name already written.
+- Go-to-definition works on the segments of an import path.
+
+### Errors for undefined symbols
+
+- Every undeclared name is now reported, not only the capitalised ones and the ones applied to `(`. The check stays quiet because the editor learned the forms that bind without being declarations: a loop's row (`for row in rows`, `for [head, tail] in rows`, `inline for name in … with index`), a pattern's capture (`.Bool(v) ->`), a lambda's parameters, a scope's name, and `catch`/`rescue` bindings. Validated against the whole standard library.
+- A name that exists but is not imported here is reported separately, with the import as the fix.
+
+### New rules the compiler enforces
+
+- A `prop` only observes: `[self&]` is the only receiver it takes. `[self!]` says that reading it writes through what it was read from, and `[self]` says that reading it ends the value - both are what a `func` is for.
+- A width suffix is not part of a literal. `4L` is reported with both ways out: drop it, or name the width as `Long(4)`.
+
+### Diagnostics and quick fixes
+
+- Borrowing: writing through a `[self&]` is an error with the exclusive borrow as its fix; a `[self!]` that never writes is a weak warning with the shared one; a receiver nothing reaches is reported; and inside an `impl` the receiver's type is always `Self`, so writing it is reported as saying nothing.
+- Style, each with a fix: `i += 1` becomes `i++`; a run of `purge` statements becomes one `purge [a, b, c]`; a one-line `func`, `prop` or block body moves onto its own line; `[a: Int, b: Int]` becomes `[a, b]: Int`; a repeated initializer `= [0, 0, 0]` becomes `= 0`; a `when` arm holding one statement drops its braces; a constructor that only restates the defaults is reported as redundant; a property that is one expression is offered in its short form.
+- Unused locals, parameters and members are reported (never dimmed - a colour says what a name *is*, and whether anyone calls it is a different question).
+
+### Colours
+
+- `prop` names read as any other name - the ordinary foreground, italic and underlined - rather than a brighter white than the fields beside them.
+- Parameters are a light grey-blue; generic type parameters take the macro colour; error cases are redder; a `${…}` macro hole is gold including its braces.
+- A `@Deprecated` declaration is struck through wherever its name appears, over whatever colour it already had.
+- Doc comments have their own green, split into prose, `@tag`, and the name a tag documents.
+
+### Grouping
+
+- `[a, b, c] = [x, y, z]` highlights each name together with the value it answers to.
+
+### Fixes
+
+- Doc comments no longer lose their colour while a file is edited: the lexer had reported every token boundary as a safe place to restart, and the editor took it at its word after an edit.
+- Colours update as soon as a declaration in another open tab changes, rather than waiting for a reparse.
+- `derives` keeps its keyword colour after a pack that states which literal it is written as, and when the clause opens its own line.
+- `where` keeps its keyword colour after a signature with a callable parameter - the `>` of `->` was being counted as a closing angle bracket.
+- A quick fix is no longer built from the text with literals blanked out, which is what once rewrote `text = text + "0"` into `text = + text`.
+- The Kotlin build daemon gets 3 GB, so a full build no longer fails as "Backend Internal error", which reads like a code fault and is not one.
+
 ## 0.0.7
 
 - Synchronized every reserved and contextual word with the compiler. This includes contextual `assoc` and `derives`, reserved `without`, and removal of `reflect` from keyword handling because it is a standard-library function.

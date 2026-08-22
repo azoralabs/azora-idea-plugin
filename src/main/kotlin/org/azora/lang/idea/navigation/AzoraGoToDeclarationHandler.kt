@@ -18,6 +18,7 @@ package org.azora.lang.idea.navigation
 
 import org.azora.lang.idea.AzoraFileType
 import org.azora.lang.idea.AzoraTokenTypes
+import org.azora.lang.idea.symbol.AzoraImports
 import org.azora.lang.idea.symbol.AzoraResolver
 import org.azora.lang.idea.symbol.AzoraSymbolService
 import org.azora.lang.idea.symbol.SymbolInfo
@@ -69,6 +70,18 @@ class AzoraGoToDeclarationHandler : GotoDeclarationHandler {
 
         // Anchor on the identifier itself: `offset` can land on either edge.
         val anchor = effectiveElement.textRange.startOffset
+
+        // On an import clause the dotted path names modules and the symbols one
+        // declares - not a value and its members, which is what the ordinary
+        // resolver reads. A segment names everything up to and including itself,
+        // so `std.container.[list]` navigates to `std`, `std.container` or
+        // `std.container.list` depending on which word was clicked.
+        AzoraImports.pathAt(content, anchor)?.let { path ->
+            val target = service.locateImportPath(project, path)
+                ?.let { toElement(it, project, file, filePath) }
+            return if (target == null) PsiElement.EMPTY_ARRAY else arrayOf(target)
+        }
+
         val symbols = resolver.resolve(filePath, content, anchor)
         if (symbols.isEmpty()) return null
 

@@ -67,6 +67,34 @@ class AzoraResolverTest {
     }
 
     @Test
+    fun `every spec in a derives list resolves to its declaration`() {
+        // `bridge pack Char derives [PartialEqual, Equal, Order, Hash]` - each
+        // entry names a spec, including the first, which follows the bracket.
+        val source = """
+            bridge spec PartialEqual
+
+            bridge spec Equal
+
+            bridge spec Order
+
+            bridge spec Hash
+
+            bridge pack Char derives [PartialEqual, Equal, Order, Hash]
+        """.trimIndent()
+
+        for (spec in listOf("PartialEqual", "Equal", "Order", "Hash")) {
+            val use = offsetOf(source, spec, occurrence = 1)
+            val resolved = resolver.resolve("/primitive.az", source, use)
+            assertEquals(
+                listOf(SymbolKind.SPEC),
+                resolved.map { it.kind },
+                "'$spec' in a derives list must resolve to its spec",
+            )
+            assertEquals(source.indexOf("spec $spec") + "spec ".length, resolved.single().offset, spec)
+        }
+    }
+
+    @Test
     fun `reads a dotted receiver chain`() {
         val source = "fin port = config.server.port"
         val reference = resolver.referenceAt(source, offsetOf(source, "port", occurrence = 1))!!

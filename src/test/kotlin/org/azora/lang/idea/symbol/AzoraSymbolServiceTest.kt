@@ -32,6 +32,155 @@ class AzoraSymbolServiceTest {
         service = AzoraSymbolService()
     }
 
+    // ── Module visibility ──────────────────────────────────────────────
+
+    @Test
+    fun `a module walked in place is as visible as one imported`() {
+        // Writing the whole path is the reference; an import is the shorthand
+        // for not writing it. `::` also survives the import parser, which reads
+        // dotted paths only - `import std.serializer::Serializable` brought in
+        // nothing at all, so the name it selects had no colour and nowhere to
+        // navigate to.
+        val source = """
+            import std.serializer::Serializable
+
+            func build() {
+                fin queue = std.container.deque::Deque()
+                std::println("built")
+            }
+        """.trimIndent()
+
+        val paths = service.qualifiedModulePaths(source)
+
+        assertTrue(paths.contains("std.serializer"), "$paths")
+        assertTrue(paths.contains("std.container.deque"), "$paths")
+        assertTrue(paths.contains("std"), "$paths")
+    }
+
+    @Test
+    fun `a group spanning lines imports every module it names`() {
+        // The import reader used to be a line scanner that knew one spelling -
+        // `path.{a, b}` on a single line. A group written across lines, or with
+        // `::` in it, imported nothing at all, so everything it selected was
+        // uncoloured and unnavigable.
+        val source = """
+            test "queue serialization metadata is declared" {
+                import std.[
+                    reflection::reflect // the compile-time handle
+                    serializer::Serializable
+                ]
+            }
+        """.trimIndent()
+
+        val paths = service.importedModulePaths(source)
+
+        assertTrue(paths.contains("std.reflection"), "$paths")
+        assertTrue(paths.contains("std.serializer"), "$paths")
+    }
+
+    @Test
+    fun `a bodyless bridge spec is still a spec`() {
+        // `std/traits/traits.az` declares the four specs every `derives` list
+        // in `primitive.az` names, and two of them have no body at all.
+        val source = """
+            module std.traits
+
+            /** Partial equality. */
+            @Since("0.1")
+            bridge spec PartialEqual<Rhs = Self> {
+                oper== [self: Self&](rhs: Rhs&): Bool
+            }
+
+            /** Full equality. */
+            @Since("0.1")
+            bridge spec Equal requires PartialEqual
+
+            /** Total order. */
+            @Since("0.1")
+            bridge spec Order requires Equal {
+                oper<=> [self: Self&](rhs: Self&): Compare
+            }
+
+            /** Hashing. */
+            @Since("0.1")
+            bridge spec Hash requires Equal {
+                prop hash[self: Self&]: ULong
+            }
+        """.trimIndent()
+
+        val specs = service.getSymbolsForFile("/std/traits/traits.az", source)
+            .filter { it.kind == SymbolKind.SPEC }
+            .map { it.name }
+
+        assertEquals(listOf("PartialEqual", "Equal", "Order", "Hash"), specs, "got: $specs")
+    }
+
+    @Test
+    fun `a wildcard reaching into a module still names it`() {
+        // `std/primitive.az` opens with this, and every spec its `derives`
+        // lists name comes from it.
+        val paths = service.importedModulePaths("import std.traits::*")
+
+        assertEquals(setOf("std.traits"), paths)
+    }
+
+    @Test
+    fun `a selected name is not mistaken for a module`() {
+        val paths = service.importedModulePaths("import std.format::Display")
+
+        assertEquals(setOf("std.format"), paths)
+    }
+
+    @Test
+    fun `a type reaching inside itself names no module`() {
+        // Module segments are lowercase; `Compare::Less` is a type and a case.
+        assertTrue(service.qualifiedModulePaths("fin x = Compare::Less").isEmpty())
+    }
+
+    // ── Names that resolve to nothing ──────────────────────────────────
+
+    @Test
+    fun `an empty index reports nothing unknown`() {
+        // Not scanned yet is not the same as does not exist, and a wall of red
+        // while a project loads would be worse than a name reported late.
+        assertTrue(service.unknownNames(null, "test.az", "func f() {}", setOf("Whatever")).isEmpty())
+    }
+
+    // ── Deprecation ────────────────────────────────────────────────────
+
+    @Test
+    fun `a declaration under Deprecated is marked`() {
+        val source = """
+            @Deprecated(since: "0.2", replacement: "next")
+            func old(): Int {}
+
+            func current(): Int {}
+        """.trimIndent()
+
+        val symbols = service.getSymbolsForFile("test.az", source)
+
+        assertTrue(symbols.single { it.name == "old" }.isDeprecated)
+        assertFalse(symbols.single { it.name == "current" }.isDeprecated)
+    }
+
+    @Test
+    fun `a doc comment between the decorator and the declaration is still its own`() {
+        val source = """
+            @Deprecated
+            /** Was the way to do this. */
+            pack Old {}
+        """.trimIndent()
+
+        assertTrue(service.getSymbolsForFile("test.az", source).single { it.name == "Old" }.isDeprecated)
+    }
+
+    @Test
+    fun `a grouped decorator row deprecates too`() {
+        val source = "@[Stable, Deprecated]\nfunc old() {}"
+
+        assertTrue(service.getSymbolsForFile("test.az", source).single { it.name == "old" }.isDeprecated)
+    }
+
     // ── Function declarations ──────────────────────────────────────────
 
     @Test
@@ -140,47 +289,47 @@ class AzoraSymbolServiceTest {
         assertEquals(2, fail.members.size)
     }
 
-    // ── Realm declarations ─────────────────────────────────────────────
+    // ── Scope declarations ─────────────────────────────────────────────
 
     @Test
-    fun `extracts realm with nested symbols`() {
+    fun `extracts scope with nested symbols`() {
         val source = """
-            realm MathUtils {
+            scope MathUtils {
                 func square(n: Int): Int {}
             }
         """.trimIndent()
         val symbols = service.getSymbolsForFile("test.az", source)
-        val realm = symbols.find { it.name == "MathUtils" }
-        assertNotNull(realm)
-        assertEquals(SymbolKind.SCOPE, realm!!.kind)
-        assertTrue(realm.members.any { it.name == "square" })
+        val scope = symbols.find { it.name == "MathUtils" }
+        assertNotNull(scope)
+        assertEquals(SymbolKind.SCOPE, scope!!.kind)
+        assertTrue(scope.members.any { it.name == "square" })
     }
 
     @Test
-    fun `extracts qualified realm path`() {
+    fun `extracts qualified scope path`() {
         val source = """
-            realm std::math {
+            scope std::math {
                 func abs(x: Int): Int {}
             }
         """.trimIndent()
         val symbols = service.getSymbolsForFile("test.az", source)
-        val realm = symbols.find { it.name == "std::math" }
-        assertNotNull(realm)
-        assertEquals(SymbolKind.SCOPE, realm!!.kind)
-        assertTrue(realm.members.any { it.name == "abs" })
+        val scope = symbols.find { it.name == "std::math" }
+        assertNotNull(scope)
+        assertEquals(SymbolKind.SCOPE, scope!!.kind)
+        assertTrue(scope.members.any { it.name == "abs" })
     }
 
     @Test
-    fun `extracts current realm paths and keeps member locations`() {
+    fun `extracts current scope paths and keeps member locations`() {
         val source = """
-            realm ide::editor {
+            scope ide::editor {
                 func open(): Unit {}
             }
         """.trimIndent()
-        val realm = service.getSymbolsForFile("realm.az", source).single { it.kind == SymbolKind.SCOPE }
+        val scope = service.getSymbolsForFile("scope.az", source).single { it.kind == SymbolKind.SCOPE }
 
-        assertEquals("ide::editor", realm.name)
-        assertEquals(2, realm.members.single { it.name == "open" }.line)
+        assertEquals("ide::editor", scope.name)
+        assertEquals(2, scope.members.single { it.name == "open" }.line)
     }
 
     @Test
@@ -301,7 +450,7 @@ class AzoraSymbolServiceTest {
         assertTrue(members.any { it.kind == SymbolKind.OPERATOR && it.name == "oper[]" })
     }
 
-    // ── Stdlib realms ─────────────────────────────────────────────────
+    // ── Stdlib scopes ─────────────────────────────────────────────────
 
     @Test
     fun `resolves std module path members`() {

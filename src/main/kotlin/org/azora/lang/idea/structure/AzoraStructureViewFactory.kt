@@ -100,7 +100,7 @@ private fun symbolLabel(source: String, symbol: SymbolInfo): String {
         SymbolKind.SLOT -> "variant enum"
         SymbolKind.FUNC, SymbolKind.TASK, SymbolKind.FLOW, SymbolKind.HOOK -> "func"
         SymbolKind.VIEW -> "react func"
-        SymbolKind.SCOPE -> "realm"
+        SymbolKind.SCOPE -> "scope"
         SymbolKind.SOLO -> "solo pack"
         SymbolKind.WRAP, SymbolKind.TYPEALIAS -> "typealias"
         SymbolKind.VAR -> "var"

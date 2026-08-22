@@ -21,7 +21,9 @@ import org.azora.lang.idea.build.AzoraManifestReader
 import org.azora.lang.idea.build.AzoraProjectConfigService
 import org.azora.lang.idea.project.AzoraSdkSettings
 import com.intellij.openapi.components.Service
+import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.psi.search.FileTypeIndex
 import com.intellij.psi.search.GlobalSearchScope
 import java.io.File
@@ -139,6 +141,8 @@ data class SymbolInfo(
     val isMutable: Boolean = false,
     val defaultValueText: String? = null,
     val documentation: String? = null,
+    /** Whether `@Deprecated` sits above the declaration. */
+    val isDeprecated: Boolean = false,
     /** Source module that owns this declaration (`engine.ui.compose`, `std.math`, ...). */
     val modulePath: String? = null,
     /** Whether the owning module was declared `exposed module` and is visible without an import. */
@@ -232,7 +236,7 @@ class AzoraSymbolService(private val project: Project? = null) {
         }
 
         getSymbolsForFile(filePath, content).forEach(::add)
-        val imports = importedModulePaths(content)
+        val imports = importedModulePaths(content) + qualifiedModulePaths(content)
         val currentPackage = packageRootFor(filePath)
         getProjectSymbols(project, filePath).asSequence()
             .filter { symbol ->
@@ -378,6 +382,20 @@ class AzoraSymbolService(private val project: Project? = null) {
         FileTypeIndex.getFiles(AzoraFileType.INSTANCE, GlobalSearchScope.projectScope(project)).toList()
     }.getOrDefault(emptyList())
 
+    /**
+     * The text of [file] as the editor has it, not as the disk has it.
+     *
+     * Reading bytes returns the last *saved* content, so a declaration typed in
+     * another open tab stayed invisible to every feature that consults the
+     * index - colours, completion, navigation - until that tab was saved. An
+     * open document is the file's real content, and is what everything the user
+     * can see is about.
+     */
+    private fun liveTextOf(file: VirtualFile): String? {
+        FileDocumentManager.getInstance().getCachedDocument(file)?.let { return it.text }
+        return runCatching { String(file.contentsToByteArray(), Charsets.UTF_8) }.getOrNull()
+    }
+
     private fun getProjectSymbols(project: Project, currentFilePath: String): List<SymbolInfo> {
         return try {
             projectFiles(project)
@@ -385,7 +403,7 @@ class AzoraSymbolService(private val project: Project? = null) {
                 .filter { it.path != currentFilePath }
                 .take(MAX_INDEXED_PROJECT_FILES)
                 .flatMap { file ->
-                    val text = runCatching { String(file.contentsToByteArray(), Charsets.UTF_8) }.getOrNull()
+                    val text = liveTextOf(file)
                     if (text == null) emptySequence() else getSymbolsForFile(file.path, text).asSequence()
                 }
                 .toList()
@@ -424,34 +442,196 @@ class AzoraSymbolService(private val project: Project? = null) {
     fun moduleOfFile(content: String): String? = moduleOf(content)
 
     /**
-     * Module paths imported by one source unit. Group imports and namespace
-     * wildcards are expanded far enough for visibility checks; selected-item
-     * imports intentionally retain their full path so [moduleVisible] can match
-     * the owning module prefix.
+     * Every declaration that *could* be imported, whatever this file imports
+     * today, each carrying the module that owns it.
+     *
+     * [getAllVisibleSymbols] answers "what can this file see", which is the
+     * right question for colouring and resolution and the wrong one for
+     * offering an import: the whole point is to reach something not yet
+     * visible. Members are flattened, because a module's scope is how the
+     * stdlib is written and not what an author imports.
+     *
+     * @param filePath the file asking, excluded from the result - a file never
+     *   needs to import itself.
+     */
+    fun getImportableSymbols(project: Project?, filePath: String): List<SymbolInfo> {
+        val merged = LinkedHashMap<String, SymbolInfo>()
+        fun add(symbol: SymbolInfo) {
+            if (symbol.modulePath.isNullOrEmpty()) return
+            if (symbol.filePath == filePath) return
+            merged.putIfAbsent("${symbol.modulePath}:${symbol.kind}:${symbol.name}", symbol)
+        }
+        for ((module, symbols) in stdlibByModule()) {
+            symbols.forEach { add(attachModule(it, module, autoImported = false)) }
+        }
+        if (project != null) {
+            getProjectSymbols(project, filePath).forEach { symbol ->
+                if (symbol.kind == SymbolKind.SCOPE) symbol.members.forEach(::add) else add(symbol)
+            }
+        }
+        return merged.values.toList()
+    }
+
+    /**
+     * Names written in this file that some module declares and no import
+     * brings in - each mapped to the module that would make it real.
+     *
+     * Visibility for *colouring* is generous: a file may see its whole package,
+     * so a name still reads as what it is while the import is being written.
+     * Whether the code compiles is a stricter question, and this is it. Only
+     * the file's own declarations, its own module, the `exposed` modules and
+     * what the imports name are in scope; anything else is written but not
+     * reachable, and the answer is one line at the top of the file.
+     *
+     * [used] is the set of names the file actually writes, so nothing is
+     * computed for the thousands of names it does not.
+     */
+    fun unimportedNames(project: Project?, filePath: String, content: String, used: Set<String>): Map<String, String> {
+        if (project == null || used.isEmpty()) return emptyMap()
+        val imports = importedModulePaths(content) + qualifiedModulePaths(content)
+        val ownModule = moduleOf(content)
+
+        val inScope = linkedSetOf<String>()
+        fun declare(symbol: SymbolInfo) {
+            inScope.add(symbol.name)
+            symbol.members.forEach(::declare)
+        }
+        getSymbolsForFile(filePath, content).forEach(::declare)
+        for (symbol in getProjectSymbols(project, filePath)) {
+            val module = symbol.modulePath
+            if (symbol.isAutoImported || (module != null && module == ownModule) || moduleVisible(module, imports)) {
+                declare(symbol)
+            }
+        }
+        stdlibSymbols(imports).forEach(::declare)
+
+        val result = LinkedHashMap<String, String>()
+        for (symbol in getImportableSymbols(project, filePath)) {
+            val module = symbol.modulePath ?: continue
+            if (symbol.name !in used || symbol.name in inScope || symbol.name in result) continue
+            result[symbol.name] = module
+        }
+        return result
+    }
+
+    /**
+     * Of [used], the names nothing anywhere declares.
+     *
+     * A name the index has never heard of resolves to nothing, whatever is
+     * imported: `MutableArrayList(…)` is not a missing import, it is a missing
+     * declaration. Only names some module *does* declare are the import
+     * question ([unimportedNames]); these two answers never overlap.
+     *
+     * An empty index means "not scanned yet", not "nothing exists", and is
+     * answered with nothing at all - a wall of red while a project loads would
+     * be worse than a name reported a second late.
+     */
+    fun unknownNames(project: Project?, filePath: String, content: String, used: Set<String>): Set<String> {
+        if (project == null || used.isEmpty()) return emptySet()
+        val importable = getImportableSymbols(project, filePath)
+        if (importable.isEmpty()) return emptySet()
+
+        val known = linkedSetOf<String>()
+        fun declare(symbol: SymbolInfo) {
+            known.add(symbol.name.substringBefore('<').substringAfterLast("::"))
+            symbol.members.forEach(::declare)
+        }
+        importable.forEach(::declare)
+        getSymbolsForFile(filePath, content).forEach(::declare)
+        getAllVisibleSymbols(project, filePath, content).forEach(::declare)
+        stdModuleAliases().keys.forEach(known::add)
+        importedModulePaths(content).forEach { path -> path.split('.').forEach(known::add) }
+        return used.filterNotTo(linkedSetOf()) { it in known }
+    }
+
+    /** The declarations [module] holds, for expanding a `.*` import to what it covers. */
+    fun symbolsOfModule(project: Project?, module: String): List<SymbolInfo> {
+        stdlibByModule()[module]?.let { return it }
+        if (project == null) return emptyList()
+        return getProjectSymbols(project, "").filter { it.modulePath == module }
+    }
+
+    /** Modules that exist under [prefix], one level down (`std` → `std.io`, `std.math`). */
+    fun childModulesOf(prefix: String): List<String> = stdlibChildModules(prefix)
+
+    /**
+     * What `import std.math` names, so an import path can be navigated.
+     *
+     * A path is a module, or a symbol selected out of one - `std.math.abs` is
+     * both a legal import and a function - so both are looked for, the symbol
+     * first, because that is the more specific reading of the same text.
+     *
+     * The returned [SymbolInfo] carries the file and offset to open; a module
+     * itself has no declaration of its own, so it is reported at the top of the
+     * file that declares it.
+     */
+    fun locateImportPath(project: Project?, path: String): SymbolInfo? {
+        val container = path.substringBeforeLast('.', "")
+        val name = path.substringAfterLast('.')
+        if (container.isNotEmpty()) {
+            symbolsOfModule(project, container).firstOrNull { it.name == name && it.filePath != null }
+                ?.let { return it }
+        }
+        stdlibByModule()[path]?.firstOrNull { it.filePath != null }?.let { member ->
+            return SymbolInfo(
+                name = path, kind = SymbolKind.SCOPE, type = path,
+                filePath = member.filePath, line = 1, offset = 0,
+                modulePath = path, documentation = "Module `$path`.",
+            )
+        }
+        if (project == null) return null
+        for (file in projectFiles(project)) {
+            val text = runCatching { String(file.contentsToByteArray(), Charsets.UTF_8) }.getOrNull() ?: continue
+            if (moduleOf(text) != path) continue
+            return SymbolInfo(
+                name = path, kind = SymbolKind.SCOPE, type = path,
+                filePath = file.path, line = 1, offset = 0,
+                modulePath = path, documentation = "Module `$path`.",
+            )
+        }
+        return null
+    }
+
+    /**
+     * Module paths a file walks in place rather than importing -
+     * `std.container.deque::Deque()` names its module at the use site.
+     *
+     * Writing the whole path *is* the reference; an import is the shorthand for
+     * not writing it. Resolving only imported modules is what left a fully
+     * qualified name uncoloured and unnavigable while the identical name one
+     * line below, reached through an import, worked.
+     *
+     * Comments and strings are not masked out: the worst a path written in prose
+     * can do is make a module this file could have imported visible, which is
+     * the same answer an import would have given.
+     */
+    internal fun qualifiedModulePaths(source: String): Set<String> =
+        QUALIFIED_PATH.findAll(source)
+            .mapNotNull { it.groupValues[1].takeIf(::validImportPath) }
+            .toCollection(linkedSetOf())
+
+    /**
+     * Module paths imported by one source unit.
+     *
+     * [AzoraImports] is the file's reader of the grammar, and this asks it the
+     * one question visibility needs: which modules did the clause reach. A leaf
+     * is a path plus, after a `::`, the name selected out of it - so the module
+     * is everything before the first selection, and `std.[reflection::reflect]`
+     * makes `std.reflection` visible exactly as `import std.reflection` does.
+     *
+     * This used to read the lines itself, and knew only the `.{ … }` spelling on
+     * a single line: a group written across lines, a `[ … ]` one, or any `::` at
+     * all imported *nothing*, which is what left everything a modern import
+     * brings in uncoloured and unnavigable.
      */
     internal fun importedModulePaths(source: String): Set<String> {
         val imported = linkedSetOf<String>()
-        for (line in source.lines()) {
-            var text = line.substringBefore("//").trim()
-            if (text.startsWith("exposed ")) text = text.removePrefix("exposed ").trimStart()
-            val keyword = when {
-                text.startsWith("import ") -> "import "
-                text.startsWith("use ") -> "use "
-                else -> continue
-            }
-            text = text.removePrefix(keyword).trim()
-            for (part in splitImportParts(text)) {
-                val path = part.trim().removeSuffix(".*").trimEnd('.')
-                if (path.isEmpty()) continue
-                val group = IMPORT_GROUP.matchEntire(path)
-                if (group != null) {
-                    val base = group.groupValues[1]
-                    splitImportParts(group.groupValues[2]).map(String::trim)
-                        .filter(::validImportName)
-                        .forEach { imported.add("$base.$it") }
-                } else if (validImportPath(path)) {
-                    imported.add(path)
-                }
+        for (clause in AzoraImports.clauses(source)) {
+            for (leaf in clause.leaves) {
+                val modules = leaf.segments.takeWhile { !it.isSelection }
+                if (modules.isEmpty()) continue
+                val path = modules.joinToString(".") { it.text }
+                if (validImportPath(path)) imported.add(path)
             }
         }
         return imported
@@ -485,24 +665,6 @@ class AzoraSymbolService(private val project: Project? = null) {
             }
             null
         }
-    }
-
-    private fun splitImportParts(text: String): List<String> {
-        val parts = mutableListOf<String>()
-        var depth = 0
-        var start = 0
-        for (index in text.indices) {
-            when (text[index]) {
-                '{' -> depth++
-                '}' -> depth = (depth - 1).coerceAtLeast(0)
-                ',' -> if (depth == 0) {
-                    parts.add(text.substring(start, index))
-                    start = index + 1
-                }
-            }
-        }
-        parts.add(text.substring(start))
-        return parts
     }
 
     private fun validImportPath(path: String): Boolean =
@@ -633,7 +795,7 @@ class AzoraSymbolService(private val project: Project? = null) {
     /** `exposed module` declarations are injected into every compilation unit. */
     private fun isAutoImportedModule(text: String): Boolean = EXPOSED_MODULE_HEADER.containsMatchIn(text)
 
-    /** Carries the owning module through nested realm/type members. */
+    /** Carries the owning module through nested scope/type members. */
     private fun attachModule(symbol: SymbolInfo, module: String?, autoImported: Boolean): SymbolInfo =
         symbol.copy(
             modulePath = module ?: symbol.modulePath,
@@ -641,7 +803,7 @@ class AzoraSymbolService(private val project: Project? = null) {
             members = symbol.members.map { attachModule(it, module, autoImported) },
         )
 
-    /** Shifts nested realm members back to their locations in the source file. */
+    /** Shifts nested scope members back to their locations in the source file. */
     private fun shiftSymbolLocation(symbol: SymbolInfo, lineBase: Int, offsetBase: Int): SymbolInfo =
         symbol.copy(
             line = if (symbol.line > 0) symbol.line + lineBase else symbol.line,
@@ -715,7 +877,7 @@ class AzoraSymbolService(private val project: Project? = null) {
 
         val root = SymbolInfo(
             name = "std", kind = SymbolKind.SCOPE,
-            // Azora's `realm std` surface is assembled from the visible std
+            // Azora's `scope std` surface is assembled from the visible std
             // modules. This is what makes `std::String` and, after importing
             // `std.reflection`, `std::reflect` resolve to their real sources.
             members = visibleModules.flatMap { byModule[it].orEmpty() }
@@ -753,7 +915,7 @@ class AzoraSymbolService(private val project: Project? = null) {
         var i = 0
 
         while (i < lines.size) {
-            // Nested declarations are collected by the owning realm/type/impl
+            // Nested declarations are collected by the owning scope/type/impl
             // extractor. Scanning them again as top-level symbols breaks symbol
             // identity and makes same-spelled navigation ambiguous.
             if (lineDepths.getOrElse(i) { 0 } != 0) {
@@ -766,6 +928,10 @@ class AzoraSymbolService(private val project: Project? = null) {
             val lineOffset = content.lineOffset(i)
             fun declarationOffset(name: String): Int = lineOffset + identifierOffsetInLine(line, name)
             val documentation = extractDocComment(lines, i)
+            // The rows above a declaration belong to it; whatever this line
+            // declares is deprecated if one of them says so.
+            val deprecated = isDeprecatedAt(lines, i)
+            val addedBefore = result.size
 
             when {
                 trimmed.startsWith("use ") || trimmed.startsWith("import ") -> {
@@ -803,8 +969,8 @@ class AzoraSymbolService(private val project: Project? = null) {
                     result.add(SymbolInfo(name, SymbolKind.PACK, members = fields, params = fields.map { it.name to it.type }, line = lineNum, offset = declarationOffset(name), filePath = filePath, genericParams = extractGenericParams(trimmed, name), isExposed = exposed, documentation = documentation))
                 }
 
-                matchesDecl(trimmed, "realm") -> {
-                    val (name, exposed) = extractNameAndExposed(trimmed, "realm")
+                matchesDecl(trimmed, "scope") -> {
+                    val (name, exposed) = extractNameAndExposed(trimmed, "scope")
                     val blockContent = extractBlockContent(lines, i)
                     val lineBase = i + 1
                     val offsetBase = content.lineOffset((i + 1).coerceAtMost(lines.lastIndex))
@@ -911,6 +1077,12 @@ class AzoraSymbolService(private val project: Project? = null) {
                 }
             }
 
+            if (deprecated) {
+                for (index in addedBefore until result.size) {
+                    result[index] = result[index].copy(isDeprecated = true)
+                }
+            }
+
             i++
         }
 
@@ -937,7 +1109,8 @@ class AzoraSymbolService(private val project: Project? = null) {
     private fun matchesDecl(trimmed: String, keyword: String): Boolean {
         val core = stripModifiers(trimmed)
         return core.startsWith("$keyword ") &&
-            core.removePrefix(keyword).trimStart().firstOrNull()?.let { it.isLetter() || it == '_' || it == '$' } == true
+            core.removePrefix(keyword).trimStart().firstOrNull()
+                ?.let { it.isLetter() || it == '_' || it == '$' || (it == '@' && keyword == "annot") } == true
     }
 
     /**
@@ -950,8 +1123,10 @@ class AzoraSymbolService(private val project: Project? = null) {
     private fun extractNameAndExposed(trimmed: String, keyword: String): Pair<String, Boolean> {
         val exposed = trimmed.startsWith("exposed ")
         val core = stripModifiers(trimmed)
-        val afterKeyword = core.removePrefix(keyword).trimStart()
-        val name = if (keyword == "realm") {
+        // `annot @Name` - the sigil is part of how a decorator is written, not
+        // part of what it is called.
+        val afterKeyword = core.removePrefix(keyword).trimStart().removePrefix("@")
+        val name = if (keyword == "scope") {
             afterKeyword.substringBefore("{").trim()
         } else {
             afterKeyword.substringBefore("(").substringBefore("{")
@@ -1304,9 +1479,32 @@ class AzoraSymbolService(private val project: Project? = null) {
             initializer.startsWith("\"") -> "String"
             initializer == "true" || initializer == "false" -> "Bool"
             initializer.matches(Regex("""[-+]?\d+""")) -> "Int"
-            initializer.matches(Regex("""[-+]?\d+\.\d+.*""")) -> "Real"
+            initializer.matches(Regex("""[-+]?\d+\.\d+.*""")) -> floatLiteralType(initializer)
             else -> null
         }
+    }
+
+    /**
+     * Whether `@Deprecated` is written above the declaration on [declarationLine].
+     *
+     * The rows above a declaration belong to it, so the walk goes up through
+     * decorators, their arguments and any doc comment, and stops at the first
+     * line that is none of those.
+     */
+    private fun isDeprecatedAt(lines: List<String>, declarationLine: Int): Boolean {
+        var i = declarationLine - 1
+        while (i >= 0) {
+            val trimmed = lines[i].trim()
+            when {
+                trimmed.isBlank() -> Unit
+                trimmed.startsWith("@") -> if (DEPRECATED_DECORATOR.containsMatchIn(trimmed)) return true
+                trimmed.startsWith("*") || trimmed.startsWith("/*") || trimmed.startsWith("//") -> Unit
+                trimmed.startsWith(")") || trimmed.startsWith("]") -> Unit
+                else -> return false
+            }
+            i--
+        }
+        return false
     }
 
     private fun extractDocComment(lines: List<String>, declarationLine: Int): String? {
@@ -1444,7 +1642,7 @@ class AzoraSymbolService(private val project: Project? = null) {
                             name, SymbolKind.FIELD, type = type, isMutable = keyword == "var",
                             line = j + 1, offset = sourceOffsetOfLine(lines, j) + identifierOffsetInLine(l, name),
                             filePath = filePath, defaultValueText = defaultVal,
-                            documentation = extractDocComment(lines, j),
+                            documentation = extractDocComment(lines, j), isDeprecated = isDeprecatedAt(lines, j),
                         ),
                     )
                 }
@@ -1464,7 +1662,7 @@ class AzoraSymbolService(private val project: Project? = null) {
                                 name, SymbolKind.FIELD, type = type, line = j + 1,
                                 offset = sourceOffsetOfLine(lines, j) + identifierOffsetInLine(l, name),
                                 filePath = filePath, defaultValueText = defaultVal,
-                                documentation = extractDocComment(lines, j),
+                                documentation = extractDocComment(lines, j), isDeprecated = isDeprecatedAt(lines, j),
                             ),
                         )
                     }
@@ -1504,7 +1702,7 @@ class AzoraSymbolService(private val project: Project? = null) {
                                 name, SymbolKind.METHOD, type = extractReturnType(header), params = extractParams(header),
                                 line = j + 1, offset = sourceOffsetOfLine(lines, j) + identifierOffsetInLine(l, name),
                                 filePath = filePath, genericParams = extractGenericParams(header, name),
-                                documentation = extractDocComment(lines, j),
+                                documentation = extractDocComment(lines, j), isDeprecated = isDeprecatedAt(lines, j),
                             ),
                         )
                     }
@@ -1512,18 +1710,18 @@ class AzoraSymbolService(private val project: Project? = null) {
                         val name = memberTrimmed.removePrefix("prop ")
                             .substringBefore("<").substringBefore("[").substringBefore(":").substringBefore("{").trim()
                         val returnType = extractReturnType(memberTrimmed) ?: extractTypeAnnotation(memberTrimmed.substringAfter("prop "))
-                        methods.add(SymbolInfo(name, SymbolKind.PROPERTY, type = returnType, line = j + 1, offset = sourceOffsetOfLine(lines, j) + identifierOffsetInLine(l, name), filePath = filePath, genericParams = extractGenericParams(memberTrimmed, name), documentation = extractDocComment(lines, j)))
+                        methods.add(SymbolInfo(name, SymbolKind.PROPERTY, type = returnType, line = j + 1, offset = sourceOffsetOfLine(lines, j) + identifierOffsetInLine(l, name), filePath = filePath, genericParams = extractGenericParams(memberTrimmed, name), documentation = extractDocComment(lines, j), isDeprecated = isDeprecatedAt(lines, j)))
                     }
                     memberTrimmed.startsWith("oper") -> {
                         val spelling = memberTrimmed.removePrefix("oper").substringBefore("[").substringBefore("(").substringBefore("{").trim()
                         val op = "oper$spelling"
-                        methods.add(SymbolInfo(op, SymbolKind.OPERATOR, line = j + 1, offset = sourceOffsetOfLine(lines, j) + identifierOffsetInLine(l, "oper"), filePath = filePath, documentation = extractDocComment(lines, j)))
+                        methods.add(SymbolInfo(op, SymbolKind.OPERATOR, line = j + 1, offset = sourceOffsetOfLine(lines, j) + identifierOffsetInLine(l, "oper"), filePath = filePath, documentation = extractDocComment(lines, j), isDeprecated = isDeprecatedAt(lines, j)))
                     }
                     memberTrimmed.startsWith("ctor") -> {
-                        methods.add(SymbolInfo("ctor", SymbolKind.CTOR, params = extractParams(callableHeader(lines, j)), line = j + 1, offset = sourceOffsetOfLine(lines, j) + identifierOffsetInLine(l, "ctor"), filePath = filePath, documentation = extractDocComment(lines, j)))
+                        methods.add(SymbolInfo("ctor", SymbolKind.CTOR, params = extractParams(callableHeader(lines, j)), line = j + 1, offset = sourceOffsetOfLine(lines, j) + identifierOffsetInLine(l, "ctor"), filePath = filePath, documentation = extractDocComment(lines, j), isDeprecated = isDeprecatedAt(lines, j)))
                     }
                     memberTrimmed.startsWith("dtor") -> {
-                        methods.add(SymbolInfo("dtor", SymbolKind.DTOR, line = j + 1, offset = sourceOffsetOfLine(lines, j) + identifierOffsetInLine(l, "dtor"), filePath = filePath, documentation = extractDocComment(lines, j)))
+                        methods.add(SymbolInfo("dtor", SymbolKind.DTOR, line = j + 1, offset = sourceOffsetOfLine(lines, j) + identifierOffsetInLine(l, "dtor"), filePath = filePath, documentation = extractDocComment(lines, j), isDeprecated = isDeprecatedAt(lines, j)))
                     }
                 }
             }
@@ -1579,7 +1777,7 @@ class AzoraSymbolService(private val project: Project? = null) {
                             name, SymbolKind.BRIDGE_FUNC, type = extractReturnType(header), params = extractParams(header),
                             line = j + 1, offset = sourceOffsetOfLine(lines, j) + identifierOffsetInLine(l, name),
                             filePath = filePath, genericParams = extractGenericParams(header, name),
-                            documentation = extractDocComment(lines, j),
+                            documentation = extractDocComment(lines, j), isDeprecated = isDeprecatedAt(lines, j),
                         ),
                     )
                 }
@@ -1615,7 +1813,7 @@ class AzoraSymbolService(private val project: Project? = null) {
                             SymbolInfo(
                                 name, SymbolKind.VARIANT, line = j + 1,
                                 offset = sourceOffsetOfLine(lines, j) + identifierOffsetInLine(l, name),
-                                filePath = filePath, documentation = extractDocComment(lines, j),
+                                filePath = filePath, documentation = extractDocComment(lines, j), isDeprecated = isDeprecatedAt(lines, j),
                             ),
                         )
                     }
@@ -1651,7 +1849,7 @@ class AzoraSymbolService(private val project: Project? = null) {
                             SymbolInfo(
                                 name, SymbolKind.VARIANT, params = params, line = j + 1,
                                 offset = sourceOffsetOfLine(lines, j) + identifierOffsetInLine(l, name),
-                                filePath = filePath, documentation = extractDocComment(lines, j),
+                                filePath = filePath, documentation = extractDocComment(lines, j), isDeprecated = isDeprecatedAt(lines, j),
                             ),
                         )
                     }
@@ -1786,7 +1984,16 @@ class AzoraSymbolService(private val project: Project? = null) {
             """(?m)^\s*exposed\s+module\s+[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*\s*(?://.*)?$""",
         )
 
-        private val IMPORT_GROUP = Regex("""^([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\.\{(.*)}$""")
+        /**
+         * A module path walked in place: `std::println`, `std.container.deque::Deque`.
+         *
+         * Module segments are lowercase, which is what tells this apart from a
+         * type reaching inside itself - `Compare::Less` names no module.
+         */
+        /** `@Deprecated`, alone or inside a grouped `@[…]` row. */
+        private val DEPRECATED_DECORATOR = Regex("""@(?:\[[^\]]*)?\bDeprecated\b""")
+
+        private val QUALIFIED_PATH = Regex("""\b([a-z][A-Za-z0-9_]*(?:\.[a-z][A-Za-z0-9_]*)*)::""")
 
         /** The declared operator in `macro @name` or `macro $a @name $b`. */
         private val MACRO_DECLARATION_NAME = Regex(
@@ -1805,8 +2012,11 @@ class AzoraSymbolService(private val project: Project? = null) {
 
         /** The set of [SymbolKind]s that represent named types with members. */
         private val TYPE_KINDS = setOf(
+            // An `annot` declares fields and is written with them -
+            // `@Since(version: "0.1")` - so its members are looked up exactly
+            // as a pack's are.
             SymbolKind.PACK, SymbolKind.ENUM, SymbolKind.FAIL,
-            SymbolKind.SLOT, SymbolKind.SCOPE, SymbolKind.SOLO
+            SymbolKind.SLOT, SymbolKind.SCOPE, SymbolKind.SOLO, SymbolKind.ANNOT,
         )
 
         /**
@@ -1819,4 +2029,16 @@ class AzoraSymbolService(private val project: Project? = null) {
             return project.getService(AzoraSymbolService::class.java)
         }
     }
+
+    /**
+     * The type of a float literal, which is `Double` wherever nothing says
+     * otherwise.
+     *
+     * A literal carries no width - the suffixes are gone and the target names
+     * the width - so this is what a literal standing alone is. `Real` is not a
+     * type Azora declares, so a hint that answered "Real" named something the
+     * user could not write down.
+     */
+    @Suppress("UNUSED_PARAMETER")
+    private fun floatLiteralType(text: String): String = "Double"
 }

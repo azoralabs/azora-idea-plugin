@@ -61,24 +61,49 @@ class AzoraLexerAdapter : LexerBase() {
      * @param buffer the full source text.
      * @param startOffset the inclusive start of the range to lex.
      * @param endOffset the exclusive end of the range to lex.
-     * @param initialState the initial lexer state (unused, always 0).
+     * @param initialState the initial lexer state; see [getState] for why the
+     *   only state a relex can begin in is the top of the file.
      */
     override fun start(buffer: CharSequence, startOffset: Int, endOffset: Int, initialState: Int) {
         this.buffer = buffer
-        this.startOffset = startOffset
         this.endOffset = endOffset
         this.tokenIndex = 0
 
-        val source = buffer.subSequence(startOffset, endOffset).toString()
-        tokens = markTypeParameters(tokenize(source))
+        // Lex from the top, so every token is decided with what precedes it in
+        // view. A caller that asks to start further in gets the tail of that
+        // same pass; only if the two disagree about where a token begins is the
+        // range lexed alone, which is what [getState] exists to prevent.
+        this.startOffset = 0
+        val whole = markTypeParameters(tokenize(buffer.subSequence(0, endOffset).toString()))
+        val from = whole.indexOfFirst { it.start >= startOffset }
+        tokens = when {
+            startOffset == 0 -> whole
+            from >= 0 && whole[from].start == startOffset -> whole.subList(from, whole.size)
+            else -> {
+                this.startOffset = startOffset
+                markTypeParameters(tokenize(buffer.subSequence(startOffset, endOffset).toString()))
+            }
+        }
+        this.startOffset = startOffset
     }
 
     /**
-     * Returns the current lexer state.
+     * Returns the current lexer state - the state a restart at
+     * [getTokenStart] would have to begin in.
      *
-     * Always returns `0` because this lexer is stateless across tokens.
+     * Only the top of the file is a restart point. What a token *is* here
+     * depends on what came before it: `binds` is a keyword only after a
+     * decorator header, `T` is a type parameter only after the `<T>` that
+     * declared it, and the lines of a doc comment are prose only because the
+     * comment opened somewhere above them.
+     *
+     * Reporting state `0` everywhere told the editor that every token boundary
+     * was a safe place to start again. It took that at its word after an edit
+     * and relexed from the middle of whatever the caret was in - which is why a
+     * doc comment's lines came back coloured as code, and why the odd keyword
+     * mid-line lost its colour, until something forced a full reparse.
      */
-    override fun getState(): Int = 0
+    override fun getState(): Int = if (getTokenStart() == 0) TOP_OF_FILE else AFTER_CONTEXT
 
     /**
      * Returns the [IElementType] of the current token, or `null` if the token stream is exhausted.
@@ -142,6 +167,13 @@ class AzoraLexerAdapter : LexerBase() {
         var pos = 0
         val len = source.length
 
+        // A `${ … }` splice is a hole in code exactly as it is a hole in a
+        // string, so the brace that closes one is not an ordinary brace. Each
+        // open splice remembers the brace depth it was opened at; the `}` that
+        // returns to that depth is the one that closes it.
+        var braceDepth = 0
+        val spliceDepths = ArrayDeque<Int>()
+
         while (pos < len) {
             val ch = source[pos]
 
@@ -152,7 +184,7 @@ class AzoraLexerAdapter : LexerBase() {
                     pos += 3
                     while (pos + 1 < len && !(source[pos] == '*' && source[pos + 1] == '/')) pos++
                     if (pos + 1 < len) pos += 2
-                    result.add(LexToken(AzoraTokenTypes.DOC_COMMENT, start + startOffset, pos + startOffset))
+                    tokenizeDocComment(source, start, pos, result)
                 }
 
                 // Block comment: /* ... */ (nestable)
@@ -279,10 +311,32 @@ class AzoraLexerAdapter : LexerBase() {
                     result.add(LexToken(type, start + startOffset, pos + startOffset))
                 }
 
+                // A `${ … }` splice outside a string — a name spliced into a
+                // declaration (`to${T.typeName}`), a value folded at compile
+                // time (`= ${_ranks[index]}`), a macro pattern hole. The `${`
+                // and its `}` are the same delimiters an interpolated string
+                // uses, and read the same; what is between them is code.
+                ch == '$' && pos + 1 < len && source[pos + 1] == '{' -> {
+                    result.add(LexToken(AzoraTokenTypes.INTERPOLATION_START, pos + startOffset, pos + 2 + startOffset))
+                    spliceDepths.addLast(braceDepth)
+                    braceDepth++
+                    pos += 2
+                }
+
                 // Identifier or keyword (`$` is a valid identifier char, e.g. `$index`)
                 ch.isLetter() || ch == '_' || ch == '$' -> {
                     val start = pos
-                    while (pos < len && (source[pos].isLetterOrDigit() || source[pos] == '_' || source[pos] == '$')) pos++
+                    while (pos < len && (source[pos].isLetterOrDigit() || source[pos] == '_' || source[pos] == '$')) {
+                        // `to${…}` is a name and a splice, not one long word.
+                        if (source[pos] == '$' && pos + 1 < len && source[pos + 1] == '{' && pos > start) break
+                        // `oper$op` is the keyword and the name spliced after
+                        // it. A keyword does not stop being one because
+                        // something is written against it.
+                        if (source[pos] == '$' && pos > start &&
+                            source.substring(start, pos) in AzoraLanguageFacts.allCompletionKeywords
+                        ) break
+                        pos++
+                    }
                     val word = source.substring(start, pos)
                     result.add(LexToken(classifyWord(source, start, word), start + startOffset, pos + startOffset))
                 }
@@ -293,7 +347,18 @@ class AzoraLexerAdapter : LexerBase() {
                     val type = matchOperator(source, pos, len)
                     if (type != null) {
                         pos += type.second
-                        result.add(LexToken(type.first, start + startOffset, pos + startOffset))
+                        val closesSplice = type.first == AzoraTokenTypes.R_BRACE &&
+                            spliceDepths.isNotEmpty() && braceDepth - 1 == spliceDepths.last()
+                        when (type.first) {
+                            AzoraTokenTypes.L_BRACE -> braceDepth++
+                            AzoraTokenTypes.R_BRACE -> braceDepth = (braceDepth - 1).coerceAtLeast(0)
+                        }
+                        if (closesSplice) {
+                            spliceDepths.removeLast()
+                            result.add(LexToken(AzoraTokenTypes.INTERPOLATION_END, start + startOffset, pos + startOffset))
+                        } else {
+                            result.add(LexToken(type.first, start + startOffset, pos + startOffset))
+                        }
                     } else {
                         // Single unknown character
                         pos++
@@ -399,6 +464,59 @@ class AzoraLexerAdapter : LexerBase() {
 
         flushLiteral(len)
         return len
+    }
+
+    /**
+     * Splits `/** … */` between [start] and [end] into prose, tags, and the
+     * names those tags document.
+     *
+     * A doc comment is one lexical thing but three things to read: the sentence,
+     * the `@param` that introduces a clause of it, and the `capacity` that says
+     * which parameter the clause is about. Only [DOC_NAMING_TAGS] take a name -
+     * `@return` and `@file` are followed by prose, and colouring its first word
+     * differently would only mislead.
+     *
+     * Everything not recognized stays [AzoraTokenTypes.DOC_COMMENT], so the runs
+     * always tile the comment exactly and nothing can fall through a gap.
+     */
+    private fun tokenizeDocComment(source: String, start: Int, end: Int, result: MutableList<LexToken>) {
+        var run = start
+        var i = start
+
+        fun flush(upTo: Int) {
+            if (upTo > run) result.add(LexToken(AzoraTokenTypes.DOC_COMMENT, run + startOffset, upTo + startOffset))
+            run = upTo
+        }
+
+        while (i < end) {
+            // A tag opens a clause, so it only counts at the start of one: after
+            // the `*` that opens a line, never inside a word or an email address.
+            if (source[i] != '@' || (i > start && !source[i - 1].isWhitespace() && source[i - 1] != '*')) {
+                i++
+                continue
+            }
+            var j = i + 1
+            while (j < end && source[j].isLetter()) j++
+            val tag = source.substring(i + 1, j)
+            if (tag.isEmpty()) { i++; continue }
+            flush(i)
+            result.add(LexToken(AzoraTokenTypes.DOC_TAG, i + startOffset, j + startOffset))
+            run = j
+            i = j
+            if (tag !in DOC_NAMING_TAGS) continue
+            // The documented name, if one follows on the same line.
+            var k = j
+            while (k < end && (source[k] == ' ' || source[k] == '\t')) k++
+            var m = k
+            while (m < end && (source[m].isLetterOrDigit() || source[m] == '_')) m++
+            if (m > k) {
+                flush(k)
+                result.add(LexToken(AzoraTokenTypes.DOC_TAG_VALUE, k + startOffset, m + startOffset))
+                run = m
+                i = m
+            }
+        }
+        flush(end)
     }
 
     /**
@@ -523,18 +641,19 @@ class AzoraLexerAdapter : LexerBase() {
         var i = 0
         while (i < result.size) {
             val tok = result[i]
-            if (tok.type == AzoraTokenTypes.DECLARATION_KEYWORD && tokenText(tok) in GENERIC_DECLARATION_HEADS) {
+            val isImpl = tok.type == AzoraTokenTypes.DECLARATION_KEYWORD && tokenText(tok) == "impl"
+            if (tok.type == AzoraTokenTypes.DECLARATION_KEYWORD &&
+                (isImpl || tokenText(tok) in GENERIC_DECLARATION_HEADS)
+            ) {
                 // Current Azora puts generic parameters after the declared name.
-                val nameIndex = nextSignificant(result, i)
-                if (nameIndex == null) {
-                    i++
-                    continue
+                // An `impl` header carries them on whichever name it implements
+                // for - `impl Deque<T>` and `impl Clone for Shared<T>` alike -
+                // so the header's first `<` is the one that opens them.
+                val genericStart = if (isImpl) implGenericStart(result, i) else {
+                    val nameIndex = nextSignificant(result, i)
+                    if (nameIndex == null || result[nameIndex].type != AzoraTokenTypes.IDENTIFIER) null
+                    else nextSignificant(result, nameIndex)
                 }
-                if (result[nameIndex].type != AzoraTokenTypes.IDENTIFIER) {
-                    i++
-                    continue
-                }
-                val genericStart = nextSignificant(result, nameIndex)
                 if (genericStart == null) {
                     i++
                     continue
@@ -584,6 +703,22 @@ class AzoraLexerAdapter : LexerBase() {
         }
 
         return result
+    }
+
+    /** The `<` that opens an `impl` header's generic parameters, if it has any. */
+    private fun implGenericStart(tokens: List<LexToken>, head: Int): Int? {
+        var i = head + 1
+        while (i < tokens.size) {
+            val token = tokens[i]
+            when {
+                token.type == AzoraTokenTypes.WHITE_SPACE && tokenText(token).contains('\n') -> return null
+                token.type == AzoraTokenTypes.L_BRACE -> return null
+                tokenText(token) == "where" -> return null
+                isLessThan(token) -> return i
+            }
+            i++
+        }
+        return null
     }
 
     /** Finds the body closing brace, or the physical-line end for a bodyless declaration. */
@@ -659,10 +794,41 @@ class AzoraLexerAdapter : LexerBase() {
         tok.type == AzoraTokenTypes.OPERATOR && tokenText(tok) == ">>"
 
     private fun classifyWord(source: String, start: Int, word: String): IElementType {
+        if (isNamePosition(source, start, word)) return AzoraTokenTypes.IDENTIFIER
         if (word in SOFT_KEYWORDS) {
             return contextualKeywordType(source, start, word) ?: AzoraTokenTypes.IDENTIFIER
         }
         return KEYWORD_MAP[word] ?: AzoraTokenTypes.IDENTIFIER
+    }
+
+    /**
+     * Whether the word at [start] sits where the grammar can only accept a name,
+     * which makes it a name whatever it is spelled.
+     *
+     * `module std.error` names a module whose last segment happens to be spelled
+     * like the `error` declaration keyword, `cursor.take()` calls a method
+     * spelled like the `take` memory keyword, and `func take[…]` declares one.
+     * In each the word cannot be the keyword, because a keyword cannot follow a
+     * member separator or a declaration head - so it is the name it looks like.
+     *
+     * This is the only keyword decision the lexer makes from position alone; it
+     * is lexical, not semantic, because it depends on the two tokens around the
+     * word and on nothing the project declares.
+     */
+    private fun isNamePosition(source: String, start: Int, word: String): Boolean {
+        var i = start - 1
+        while (i >= 0 && (source[i] == ' ' || source[i] == '\t')) i--
+        // `..` and `...` are range and spread operators, not member separators.
+        if (i >= 0 && source[i] == '.') return i < 1 || source[i - 1] != '.'
+        if (i >= 1 && source[i] == ':' && source[i - 1] == ':') return true
+
+        // A declaration head only reaches the name on its own line: the word
+        // opening the next line is a declaration of its own, not this one's
+        // name. And a head reaches *past* any word that is itself part of a
+        // head, so `variant error Foo` declares `Foo` and keeps `error`.
+        if (i < 0 || source[i] == '\n' || source[i] == '\r') return false
+        if (word in DECLARATION_HEAD_WORDS) return false
+        return previousWord(source, start) in DECLARATION_NAME_PREFIXES
     }
 
     /**
@@ -674,8 +840,6 @@ class AzoraLexerAdapter : LexerBase() {
      * `AzoraSemanticAnnotator` colors those on a later pass.
      */
     private fun contextualKeywordType(source: String, start: Int, word: String): IElementType? {
-        val previous = previousWord(source, start)
-        if (previous in DECLARATION_NAME_PREFIXES) return null
         return when (word) {
             "where" -> if (isContextualWhere(source, start)) AzoraTokenTypes.CONTROL_KEYWORD else null
             "module" -> if (isContextualModule(source, start)) AzoraTokenTypes.DECLARATION_KEYWORD else null
@@ -722,8 +886,10 @@ class AzoraLexerAdapter : LexerBase() {
                     i--
                 }
                 '>' -> {
-                    angleDepth++
-                    i--
+                    // `(T) -> K` - the `>` of an arrow closes nothing. Counted
+                    // as an angle bracket it left the real `<T, K>` unbalanced,
+                    // and `where` after such a signature lost its keyword.
+                    if (i > 0 && source[i - 1] == '-') i -= 2 else { angleDepth++; i-- }
                 }
                 '(' -> {
                     if (parenDepth == 0) return false
@@ -888,10 +1054,7 @@ class AzoraLexerAdapter : LexerBase() {
     /** `derives` follows the name/generics of a pack. Unions cannot derive. */
     private fun isContextualDerives(source: String, start: Int): Boolean {
         if (isAfterMemberSeparator(source, start)) return false
-        val prefix = linePrefix(source, start)
-        val declaration = Regex(
-            """(?:^|\s)pack\s+[A-Za-z_$][\w$]*(?:\s*<[^>{}\n]*>)?\s*$""",
-        ).containsMatchIn(prefix)
+        val declaration = DERIVES_DECLARATION.containsMatchIn(headPrefix(source, start))
         if (!declaration) return false
         val after = skipWhitespace(source, start + "derives".length)
         return source.getOrNull(after)?.let(::isIdentifierStart) == true || source.getOrNull(after) == '['
@@ -901,8 +1064,10 @@ class AzoraLexerAdapter : LexerBase() {
     private fun isContextualBinds(source: String, start: Int): Boolean {
         if (isAfterMemberSeparator(source, start)) return false
         val prefix = linePrefix(source, start)
+        // `annot @Name` - a decorator is declared with the sigil it is written
+        // with, and `binds` still belongs to that header.
         val annotationHeader = Regex(
-            """(?:^|\s)annot\s+[A-Za-z_$][\w$]*(?:\s+for\s+.+)?\s*$""",
+            """(?:^|\s)annot\s+@[A-Za-z_$][\w$]*(?:\s+for\s+.+)?\s*$""",
         ).containsMatchIn(prefix)
         val graphRegistration = Regex(
             """^\s*(?:solo|factory|scope)\s+[A-Za-z_$][\w$]*(?:\s*\([^\n]*\))?\s*$""",
@@ -973,6 +1138,27 @@ class AzoraLexerAdapter : LexerBase() {
         return source.startsWith("->", index)
     }
 
+    /**
+     * The declaration head a word at [start] continues.
+     *
+     * Normally that is what precedes the word on its own line. A long
+     * declaration puts its clause underneath itself instead, so when nothing
+     * precedes the word the head is the line above it - the last one that
+     * carries anything.
+     */
+    private fun headPrefix(source: String, start: Int): String {
+        var lineStart = source.lastIndexOf('\n', start - 1).let { if (it < 0) 0 else it + 1 }
+        if (source.substring(lineStart, start).isNotBlank()) return source.substring(lineStart, start)
+        while (lineStart > 0) {
+            val aboveEnd = lineStart - 1
+            val aboveStart = source.lastIndexOf('\n', aboveEnd - 1).let { if (it < 0) 0 else it + 1 }
+            val above = source.substring(aboveStart, aboveEnd)
+            if (above.isNotBlank()) return above.trimEnd()
+            lineStart = aboveStart
+        }
+        return ""
+    }
+
     private fun linePrefix(source: String, start: Int): String {
         val lineStart = source.lastIndexOf('\n', start - 1).let { if (it < 0) 0 else it + 1 }
         return source.substring(lineStart, start)
@@ -1020,6 +1206,12 @@ class AzoraLexerAdapter : LexerBase() {
 
     companion object {
 
+        /** The one state a relex may start in: the top of the file. */
+        private const val TOP_OF_FILE = 0
+
+        /** Anywhere else - a token whose meaning depends on what came before it. */
+        private const val AFTER_CONTEXT = 1
+
         /** Keywords that introduce declarations (functions, types, modules, etc.). */
         private val DECLARATION_KEYWORDS = AzoraLanguageFacts.declarationKeywords
 
@@ -1038,12 +1230,35 @@ class AzoraLexerAdapter : LexerBase() {
         /** Literal value keywords: `true`, `false`, `null`. */
         private val LITERAL_KEYWORDS = AzoraLanguageFacts.literalKeywords
 
+        /** Doc tags whose first word names a declaration - see [tokenizeDocComment]. */
+        private val DOC_NAMING_TAGS = AzoraLanguageFacts.docNamingTags
+
         private val SOFT_KEYWORDS = AzoraLanguageFacts.softKeywords
 
         private val DECLARATION_NAME_PREFIXES = setOf(
-            "func", "pack", "enum", "variant", "error", "spec", "realm", "scope",
+            "func", "pack", "enum", "variant", "error", "spec", "scope",
             "module", "prop", "var", "val", "fin", "let", "typealias", "test",
             "annot", "impl", "union", "graph", "oper", "bind",
+        )
+
+        /**
+         * Words a declaration head can be followed by and still not have reached
+         * its name: another head (`variant error Foo`) or a modifier
+         * (`exposed inline func f`). Everything else after a head is the name.
+         */
+        private val DECLARATION_HEAD_WORDS =
+            DECLARATION_NAME_PREFIXES + AzoraLanguageFacts.modifierKeywords
+
+        /**
+         * The declaration a `derives` clause may follow.
+         *
+         * A pack, named, optionally generic, and optionally saying which
+         * literal it is written as - `bridge pack Int<N: __uint = 32>(__int)`
+         * is all three at once.
+         */
+        private val DERIVES_DECLARATION = Regex(
+            """(?:^|\s)pack\s+[A-Za-z_$][\w$]*""" +
+                """(?:\s*<[^>{}\n]*>)?(?:\s*\([^)\n]*\))?\s*$""",
         )
 
         /** Declaration heads that may legally introduce a `where` clause. */

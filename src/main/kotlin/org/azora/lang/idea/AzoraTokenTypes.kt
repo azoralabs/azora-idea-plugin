@@ -86,7 +86,7 @@ object AzoraTokenTypes {
     /** General-purpose keyword fallback (anything not in a more specific category). */
     @JvmField val KEYWORD = AzoraTokenType("KEYWORD")
 
-    /** Declaration keywords: `func`, `pack`, `enum`, `variant`, `realm`, `impl`, `spec`, etc. */
+    /** Declaration keywords: `func`, `pack`, `enum`, `variant`, `scope`, `impl`, `spec`, etc. */
     @JvmField val DECLARATION_KEYWORD = AzoraTokenType("DECLARATION_KEYWORD")
 
     /** Control-flow keywords: `if`, `else`, `for`, `while`, `loop`, `when`, `return`, `break`, `continue`, etc. */
@@ -150,7 +150,23 @@ object AzoraTokenTypes {
     @JvmField val BLOCK_COMMENT = AzoraTokenType("BLOCK_COMMENT")
 
     /** Documentation comment starting with `///`. */
-    @JvmField val DOC_COMMENT = AzoraTokenType("DOC_COMMENT")
+    /**
+     * `/** … */`, whose leaf is a `PsiDocCommentBase` so the platform can
+     * render it in place. See [org.azora.lang.idea.documentation.AzoraDocCommentType].
+     */
+    @JvmField val DOC_COMMENT: IElementType =
+        org.azora.lang.idea.documentation.AzoraDocCommentType("DOC_COMMENT")
+
+    /** A doc tag - the `@param` of `@param capacity The size to reserve.` */
+    @JvmField val DOC_TAG = AzoraTokenType("DOC_TAG")
+
+    /**
+     * The name a doc tag documents - the `capacity` of `@param capacity`.
+     *
+     * Only the tags that name something the signature also names carry one, so
+     * this is a reference to a declaration rather than the start of the prose.
+     */
+    @JvmField val DOC_TAG_VALUE = AzoraTokenType("DOC_TAG_VALUE")
 
     // ── Decorator ──────────────────────────────────────────────────────
 
@@ -179,7 +195,9 @@ object AzoraTokenTypes {
     // ── Token sets ─────────────────────────────────────────────────────
 
     /** All comment token types (line, block, and doc). */
-    @JvmField val COMMENTS = TokenSet.create(LINE_COMMENT, BLOCK_COMMENT, DOC_COMMENT)
+    @JvmField val COMMENTS = TokenSet.create(
+        LINE_COMMENT, BLOCK_COMMENT, DOC_COMMENT, DOC_TAG, DOC_TAG_VALUE,
+    )
 
     /** String-like literal tokens (strings and characters). */
     @JvmField val STRINGS = TokenSet.create(STRING_LITERAL, RAW_STRING_LITERAL, CHAR_LITERAL)
@@ -196,6 +214,7 @@ object AzoraTokenTypes {
     /** Tokens that carry no meaning for expression structure. */
     @JvmField val IGNORABLE = TokenSet.create(
         WHITE_SPACE, NEWLINE, LINE_COMMENT, BLOCK_COMMENT, DOC_COMMENT,
+        DOC_TAG, DOC_TAG_VALUE,
     )
 
     /** Token types that can end an operand, so a word right after one is infix. */

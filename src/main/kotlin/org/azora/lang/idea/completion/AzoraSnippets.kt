@@ -49,7 +49,7 @@ object AzoraSnippets {
         AzoraSnippet("spec", "Specification", "spec Name {\n    func method(): ReturnType\n}"),
         AzoraSnippet("impl", "Implementation block", "impl TypeName {\n    \n}"),
         AzoraSnippet("implfor", "Spec implementation", "impl SpecName for TypeName {\n    \n}"),
-        AzoraSnippet("annot", "Annotation declaration", "annot Name for .Pack {\n    fin value: Type\n}"),
+        AzoraSnippet("annot", "Annotation declaration", "annot @Name for .Pack {\n    fin value: Type\n}"),
         AzoraSnippet("graph", "Dependency graph", "graph Name {\n    solo Service()\n}"),
         AzoraSnippet("typealias", "Type alias", "typealias Name = Type"),
         AzoraSnippet("prop", "Computed property", "prop name[self: Self&]: Type = value"),
@@ -57,10 +57,10 @@ object AzoraSnippets {
         AzoraSnippet("reactctor", "Reactive constructor", "react ctor[self: Self!, anchor: Anchor&](value: Type): Entity {\n    return anchor.pass.create(value)\n}"),
         AzoraSnippet("oper", "Operator overload", "oper+ [self: Self&](other: Self&): Self {\n    return self\n}"),
 
-        // Modules and realms
+        // Modules and scopes
         AzoraSnippet("module", "Module declaration", "module app.name"),
         AzoraSnippet("import", "Import", "import std.io"),
-        AzoraSnippet("realm", "Qualified namespace", "realm app::name {\n    \n}"),
+        AzoraSnippet("scope", "Qualified namespace", "scope app::name {\n    \n}"),
         AzoraSnippet("bridge", "Foreign function block", "bridge .C {\n    func name(param: Type): ReturnType\n}"),
 
         // Macros

@@ -71,9 +71,31 @@ class RealSourcesSmokeTest {
      * the real-source smoke pass excludes them and remains focused on bogus
      * syntax/lexical errors.
      */
+    /**
+     * Diagnostics real sources genuinely trip, which this smoke test is not about.
+     *
+     * This test exists to catch a plugin that has started *misreading* real code.
+     * A rule that real code actually breaks is a finding about the code, and
+     * asserting it away here would only hide the next real misreading behind it.
+     *
+     * The borrow rule is the newest of these: `azora-engine`'s `ecs.az` declares
+     * `func progress[self: Self&]` and `func setFixedTimestep[self: Self&]` and
+     * then assigns to `self.tick`, `self.totalTime`, `self.fixedAccumulator` and
+     * `self.fixedTimestep`. Those receivers want `!`.
+     */
     private fun isRequestedStyleDiagnostic(message: String): Boolean =
         message.contains("must use lowerCamelCase") ||
             message.contains("must use UpperCamelCase") ||
+            message.contains("is borrowed for reading") ||
+            // `azora-engine` still writes `0L`, `24L` and the rest, from before
+            // the language dropped width suffixes. The compiler refuses those
+            // too, so this is a real finding about the engine rather than about
+            // the plugin - and the engine is a repository of its own to fix.
+            message.contains("A width suffix is not part of a literal") ||
+            // `ecs.az` implements `Iterator` with `prop hasNext` and `prop next`,
+            // from before a `prop` was restricted to observing. Advancing a
+            // cursor is what a `func` is for, and the engine has yet to say so.
+            message.contains("A 'prop' only observes") ||
             message == "Integer literal does not have the explicitly declared Double type"
 
     @Test

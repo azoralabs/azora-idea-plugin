@@ -18,7 +18,9 @@ package org.azora.lang.idea.completion
 
 import org.azora.lang.idea.AzoraLanguage
 import org.azora.lang.idea.AzoraLanguageFacts
+import org.azora.lang.idea.symbol.AzoraAutoImport
 import org.azora.lang.idea.symbol.AzoraMacroIndex
+import org.azora.lang.idea.symbol.AzoraImports
 import org.azora.lang.idea.symbol.AzoraResolver
 import org.azora.lang.idea.symbol.AzoraSymbolService
 import org.azora.lang.idea.symbol.SymbolInfo
@@ -29,6 +31,7 @@ import com.intellij.codeInsight.completion.CompletionProvider
 import com.intellij.codeInsight.completion.CompletionResultSet
 import com.intellij.codeInsight.completion.CompletionType
 import com.intellij.codeInsight.completion.PlainPrefixMatcher
+import com.intellij.codeInsight.completion.PrioritizedLookupElement
 import com.intellij.codeInsight.lookup.LookupElementBuilder
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.project.Project
@@ -75,6 +78,12 @@ class AzoraCompletionContributor : CompletionContributor() {
             val prefix = source.substring(lineStart, offset)
             val trimmedPrefix = prefix.trimStart()
 
+            // A group may span lines, so what the caret is inside is the whole
+            // clause and not the line it sits on. Reading the line alone left
+            // the caret in `import std.[\n    reflection::` looking like a bare
+            // `reflection::` with no clause around it.
+            val importPrefix = enclosingImportPrefix(source, offset) ?: trimmedPrefix
+
             // `@` introduces either an annotation or a real macro. Both are
             // completed from symbols visible in this file; the sigil itself is
             // already present and is never duplicated by insertion.
@@ -87,8 +96,8 @@ class AzoraCompletionContributor : CompletionContributor() {
             }
 
             // In an import, only module paths make sense.
-            if (IMPORT_LINE.matches(trimmedPrefix)) {
-                addImportCompletions(service, project, trimmedPrefix, result)
+            if (IMPORT_LINE.matches(importPrefix)) {
+                addImportCompletions(service, project, importPrefix, result)
                 return
             }
 
@@ -163,6 +172,19 @@ class AzoraCompletionContributor : CompletionContributor() {
             }
         }
 
+        /**
+         * The `import …` clause the caret sits inside, up to the caret.
+         *
+         * Returns `null` when the caret is not in one. A clause that closed
+         * before the caret is not one it is inside, which is what keeps the line
+         * after an import from being completed as part of it.
+         */
+        private fun enclosingImportPrefix(source: String, offset: Int): String? {
+            val clause = AzoraImports.clauses(source.substring(0, offset)).lastOrNull() ?: return null
+            if (clause.end < offset && !source.substring(clause.end, offset).isBlank()) return null
+            return source.substring(clause.start, offset).trimStart()
+        }
+
         // ── Imports ────────────────────────────────────────────────────
 
         /**
@@ -184,19 +206,34 @@ class AzoraCompletionContributor : CompletionContributor() {
             val grouped = GROUPED_IMPORT.find(typed)
             if (grouped != null) {
                 val base = grouped.groupValues[1]
-                val partial = grouped.groupValues[2].substringAfterLast(',').trim()
-                modules.asSequence()
-                    .filter { it.startsWith("$base.") }
-                    .map { it.removePrefix("$base.").substringBefore('.') }
-                    .distinct()
-                    .filter { it.startsWith(partial) }
-                    .forEach {
-                        result.addElement(
-                            LookupElementBuilder.create(it)
-                                .withIcon(AllIcons.Nodes.Package)
-                                .withTypeText("$base.$it", true)
-                        )
-                    }
+                val partial = grouped.groupValues[2].substringAfterLast(',').substringAfterLast('\n').trim()
+                // A group holds whatever its separator said it holds: modules
+                // under the path when a `.` opened it, names inside the module
+                // when a `::` did.
+                val selecting = "::[" in typed || "::{" in typed
+                if (selecting) {
+                    addModuleMembers(service, project, base, partial, result)
+                } else {
+                    modules.asSequence()
+                        .filter { it.startsWith("$base.") }
+                        .map { it.removePrefix("$base.").substringBefore('.') }
+                        .distinct()
+                        .filter { it.startsWith(partial) }
+                        .forEach {
+                            result.addElement(
+                                LookupElementBuilder.create(it)
+                                    .withIcon(AllIcons.Nodes.Package)
+                                    .withTypeText("$base.$it", true)
+                            )
+                        }
+                }
+                return
+            }
+
+            // `import std.math::` - the module is settled, so what follows is a
+            // name it declares rather than another step down the tree.
+            SELECTING_IMPORT.find(typed)?.let { selecting ->
+                addModuleMembers(service, project, selecting.groupValues[1], selecting.groupValues[2], result)
                 return
             }
 
@@ -208,11 +245,26 @@ class AzoraCompletionContributor : CompletionContributor() {
                         .withTypeText("module", true)
                 )
                 // The wildcard form is a genuine alternative for each module.
+                // It selects declarations, so it is spelled with `::`.
                 result.addElement(
-                    LookupElementBuilder.create("$module.*")
+                    LookupElementBuilder.create("$module::*")
                         .withIcon(AllIcons.Nodes.Package)
                         .withTypeText("all members", true)
                 )
+            }
+        }
+
+        /** The declarations [module] holds, for the name after a `::`. */
+        private fun addModuleMembers(
+            service: AzoraSymbolService,
+            project: Project,
+            module: String,
+            partial: String,
+            result: CompletionResultSet,
+        ) {
+            for (symbol in service.symbolsOfModule(project, module)) {
+                if (partial.isNotEmpty() && !symbol.name.startsWith(partial)) continue
+                result.addElement(lookupFor(symbol).withTypeText(module, true))
             }
         }
 
@@ -283,7 +335,7 @@ class AzoraCompletionContributor : CompletionContributor() {
             return true
         }
 
-        /** Recursively exposes nested realm symbols to sigil completion. */
+        /** Recursively exposes nested scope symbols to sigil completion. */
         private fun allSymbols(symbol: SymbolInfo): Sequence<SymbolInfo> = sequence {
             yield(symbol)
             for (member in symbol.members) yieldAll(allSymbols(member))
@@ -362,8 +414,65 @@ class AzoraCompletionContributor : CompletionContributor() {
                 }
             }
 
-            for (symbol in service.getAllVisibleSymbols(project, filePath, source)) {
+            val visible = service.getAllVisibleSymbols(project, filePath, source)
+            for (symbol in visible) {
                 if (symbol.kind in TOP_LEVEL_KINDS) result.addElement(lookupFor(symbol))
+            }
+            addUnimportedCompletions(service, filePath, source, project, visible, result)
+        }
+
+        /**
+         * Names that exist but are not imported here, each carrying the import
+         * that would make it real.
+         *
+         * A name is only useful to offer if accepting it leaves working code, so
+         * the import is written by the same keystroke that writes the name -
+         * that is the whole point of offering something out of scope.
+         *
+         * These sort last and say where they come from, so an in-scope name is
+         * never displaced by a stranger with the same spelling.
+         */
+        private fun addUnimportedCompletions(
+            service: AzoraSymbolService,
+            filePath: String,
+            source: String,
+            project: Project,
+            visible: List<SymbolInfo>,
+            result: CompletionResultSet,
+        ) {
+            // Only once something is being typed. With an empty prefix this is
+            // every symbol in the SDK, which is a list nobody reads.
+            val typed = result.prefixMatcher.prefix
+            if (typed.length < MIN_UNIMPORTED_PREFIX) return
+
+            val inScope = visible.mapTo(HashSet()) { it.name }
+            val importable = runCatching { service.getImportableSymbols(project, filePath) }
+                .getOrDefault(emptyList())
+            var offered = 0
+            for (symbol in importable) {
+                if (offered >= MAX_UNIMPORTED) break
+                val module = symbol.modulePath ?: continue
+                if (symbol.kind !in TOP_LEVEL_KINDS) continue
+                // The session's own matcher, so `deq` finds `Deque` and `hmap`
+                // finds `HashMap`. A case-sensitive `startsWith` hid every type
+                // in the project behind its own first letter.
+                if (symbol.name in inScope || !result.prefixMatcher.prefixMatches(symbol.name)) continue
+                if (AzoraAutoImport.importEdit(source, module) == null) continue
+                offered++
+                result.addElement(
+                    PrioritizedLookupElement.withPriority(
+                        lookupFor(symbol)
+                            .withTypeText(module, true)
+                            .withInsertHandler { context, _ ->
+                                val edit = AzoraAutoImport.importEdit(context.document.text, module)
+                                if (edit != null) {
+                                    AzoraAutoImport.apply(context.document, edit)
+                                    context.commitDocument()
+                                }
+                            },
+                        UNIMPORTED_PRIORITY,
+                    ),
+                )
             }
         }
 
@@ -452,20 +561,44 @@ class AzoraCompletionContributor : CompletionContributor() {
         private fun isNameChar(c: Char): Boolean = c.isLetterOrDigit() || c == '_' || c == '$'
 
         private companion object {
+
+            /**
+             * How much of a name must be typed before out-of-scope symbols are
+             * offered.
+             *
+             * One letter: everything a project declares is a candidate as soon
+             * as a word is started, and the matcher plus [MAX_UNIMPORTED] keep
+             * the list to what was asked for. Only the empty prefix is refused,
+             * where "everything" is the whole SDK and answers no question.
+             */
+            const val MIN_UNIMPORTED_PREFIX = 1
+
+            /** A ceiling, so a common prefix cannot bury what is in scope. */
+            const val MAX_UNIMPORTED = 200
+
+            /** Below everything already reachable - a stranger never wins a tie. */
+            const val UNIMPORTED_PRIORITY = -100.0
             /** A resolver used only for its pure text helpers. */
             val QUALIFIER_READER = AzoraResolver(null, AzoraSymbolService())
 
+            /** Everything a module can declare at its top level, and so import. */
             val TOP_LEVEL_KINDS = setOf(
                 SymbolKind.FUNC, SymbolKind.BRIDGE_FUNC, SymbolKind.PACK,
                 SymbolKind.ENUM, SymbolKind.FAIL, SymbolKind.SOLO,
                 SymbolKind.SCOPE, SymbolKind.SPEC, SymbolKind.GRAPH,
                 SymbolKind.VAR, SymbolKind.FIN, SymbolKind.TYPEALIAS,
+                SymbolKind.ANNOT, SymbolKind.SLOT, SymbolKind.WRAP, SymbolKind.VIEW,
             )
             val VARIANT_OWNERS = setOf(SymbolKind.ENUM, SymbolKind.FAIL, SymbolKind.SLOT)
 
             val BRIDGE_TARGET = Regex("""\bbridge\s*\.\s*\w*$""")
-            val IMPORT_LINE = Regex("""(?:export\s+)?(?:import|use)\s+[\w.{}*,\s]*""")
-            val GROUPED_IMPORT = Regex("""^([\w.]+)\.\{([^}]*)$""")
+            val IMPORT_LINE = Regex("""(?:export\s+)?(?:import|use)\s+[\w.:\[\]{}*,\s]*""")
+
+            /** An open group, bracket or brace, with the base it hangs off. */
+            val GROUPED_IMPORT = Regex("""^([\w.]+)(?:\.|::)[\[{]([^\]}]*)$""", RegexOption.DOT_MATCHES_ALL)
+
+            /** An open `::` selection: the module is known, the name is being typed. */
+            val SELECTING_IMPORT = Regex("""^([\w.]+)::(\w*)$""")
 
             /** Templates need at least this much prefix before they are offered. */
             const val MIN_SNIPPET_PREFIX = 2

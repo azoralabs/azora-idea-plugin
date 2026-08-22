@@ -228,9 +228,17 @@ class AzoraFoldingBuilder : FoldingBuilderEx() {
                 if (document.getLineNumber(startOffset) < document.getLineNumber(endOffset - 1)) {
                     val range = TextRange(startOffset, endOffset)
                     val placeholder = if (isDoc) "/** ... */" else "/* ... */"
-                    descriptors.add(object : FoldingDescriptor(root.node, range) {
-                        override fun getPlaceholderText(): String = placeholder
-                    })
+                    // The licence at the top of a file is the same in every
+                    // file and is read once, so it starts folded - as it does
+                    // in every other language. A doc comment does not: it is
+                    // *rendered* rather than hidden, which is a different
+                    // thing the platform does with it.
+                    val header = !isDoc && text.take(startOffset).isBlank()
+                    descriptors.add(
+                        object : FoldingDescriptor(root.node, range, null, emptySet<Any>(), header) {
+                            override fun getPlaceholderText(): String = placeholder
+                        },
+                    )
                 }
                 continue
             }
@@ -370,7 +378,7 @@ class AzoraFoldingBuilder : FoldingBuilderEx() {
 
         /** Keywords whose brace blocks are candidates for folding with context. */
         private val FOLDABLE_KEYWORDS = listOf(
-            "pack", "enum", "error", "realm", "impl", "solo", "bridge",
+            "pack", "enum", "error", "scope", "impl", "solo", "bridge",
             "func", "test", "when", "for", "while", "loop", "if", "else",
             "try", "catch", "rescue", "spec", "annot", "graph", "macro",
             "ctor", "dtor", "oper", "unsafe", "defer", "scope", "effect",

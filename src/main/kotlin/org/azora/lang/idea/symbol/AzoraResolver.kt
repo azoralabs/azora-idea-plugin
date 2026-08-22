@@ -733,7 +733,7 @@ class AzoraResolver(
             text.startsWith("'") -> "Char"
             text == "true" || text == "false" -> "Bool"
             text.matches(Regex("""[-+]?\d+""")) -> "Int"
-            text.matches(Regex("""[-+]?\d+\.\d+.*""")) -> "Real"
+            text.matches(Regex("""[-+]?\d+\.\d+.*""")) -> floatLiteralType(text)
             else -> null
         }
     }
@@ -789,4 +789,16 @@ class AzoraResolver(
         val CONSTRUCTOR = Regex("""^([A-Z][\w]*)\s*(?:<[^>]+>)?\s*\(""")
         val SIGIL_PATH_SUFFIX = Regex("""@(?:[A-Za-z_$][\w$]*::)*\s*$""")
     }
+
+    /**
+     * The type of a float literal, which is `Double` wherever nothing says
+     * otherwise.
+     *
+     * A literal carries no width - the suffixes are gone and the target names
+     * the width - so this is what a literal standing alone is. `Real` is not a
+     * type Azora declares, so a hint that answered "Real" named something the
+     * user could not write down.
+     */
+    @Suppress("UNUSED_PARAMETER")
+    private fun floatLiteralType(text: String): String = "Double"
 }
