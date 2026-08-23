@@ -62,7 +62,7 @@ class AzoraImportOptimizer : ImportOptimizer {
         val service = AzoraSymbolService.getInstance(project)
         val symbols = HashMap<String, Collection<String>>()
         val modules = HashMap<String, Collection<String>>()
-        return AzoraImportRewriter.narrowWildcards(
+        val narrowed = AzoraImportRewriter.narrowWildcards(
             source,
             namesFor = { module ->
                 symbols.getOrPut(module) { service.symbolsOfModule(project, module).map { it.name }.distinct() }
@@ -72,5 +72,8 @@ class AzoraImportOptimizer : ImportOptimizer {
             // the difference the two separators exist to state.
             modulesFor = { module -> modules.getOrPut(module) { service.childModulesOf(module) } },
         )
+        // Brackets around a single name are the other thing an import can say
+        // twice; a narrowing that lands on one name is written the same way.
+        return AzoraImportRewriter.collapseRedundantGroups(narrowed)
     }
 }

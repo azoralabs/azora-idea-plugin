@@ -17,7 +17,8 @@
 package org.azora.lang.idea.symbol
 
 /**
- * Narrowing `import path.*` to the names a file actually uses.
+ * Narrowing `import path.*` to the names a file actually uses, and dropping the
+ * brackets from a group that holds one name.
  *
  * A wildcard says "everything below here", which is convenient to write and
  * tells a reader nothing. Optimizing imports replaces it with the selection it
@@ -81,7 +82,10 @@ object AzoraImportRewriter {
         var narrowed = false
         for (leaf in clause.leaves) {
             if (!leaf.isWildcard) {
-                parts.add(leaf.path)
+                // A leaf that was reached with `::` is rewritten with one: the
+                // dotted spelling of the same path would name a module that
+                // does not exist.
+                parts.add(if (leaf.isSelection) "${leaf.container}::${leaf.name}" else leaf.path)
                 continue
             }
             val modules = modulesFor(leaf.path).toSet()
@@ -101,6 +105,79 @@ object AzoraImportRewriter {
         }
         if (!narrowed) return null
         return parts.joinToString("\n${clause.indent}") { "import $it" }
+    }
+
+    // ── Groups of one ───────────────────────────────────────────────────
+
+    /**
+     * A clause whose group holds a single name, and what it should say instead.
+     *
+     * @property clause the whole `import …`, from the keyword to the closer.
+     * @property brackets the group itself - what a reader would look at.
+     * @property replacement the clause rewritten without the brackets.
+     */
+    data class Collapse(val clause: IntRange, val brackets: IntRange, val replacement: String)
+
+    /**
+     * Every clause in [source] that brackets a single name.
+     *
+     * A group exists to put several names under one path. With one name in it
+     * the brackets say nothing the name does not, and the two spellings of the
+     * same import read as different imports:
+     *
+     * ```
+     * import std.io::[println]        →   import std.io::println
+     * import std.container.[list]     →   import std.container.list
+     * ```
+     *
+     * A group carrying a comment is left alone. The comment is there to say why
+     * a name is in the list, and collapsing the clause onto one line would take
+     * it with the brackets.
+     */
+    fun redundantGroups(source: String): List<Collapse> {
+        val result = mutableListOf<Collapse>()
+        for (clause in AzoraImports.clauses(source)) {
+            val leaf = clause.leaves.singleOrNull() ?: continue
+            if (clause.text.contains("//") || clause.text.contains("/*")) continue
+            val open = clause.text.indexOfFirst { it == '[' || it == '{' }
+            if (open < 0) continue
+            val close = clause.text.lastIndexOf(if (clause.text[open] == '[') ']' else '}')
+            if (close < open) continue
+            val keyword = clause.text.takeWhile { !it.isWhitespace() }
+            result.add(
+                Collapse(
+                    clause = clause.start until clause.end,
+                    brackets = (clause.start + open) until (clause.start + close + 1),
+                    replacement = "$keyword ${spell(leaf)}",
+                )
+            )
+        }
+        return result
+    }
+
+    /** [source] with every one-name group written without its brackets. */
+    fun collapseRedundantGroups(source: String): String {
+        val collapses = redundantGroups(source)
+        if (collapses.isEmpty()) return source
+        val builder = StringBuilder(source)
+        // Back to front, so an earlier clause's offsets survive a later rewrite.
+        for (collapse in collapses.sortedByDescending { it.clause.first }) {
+            builder.replace(collapse.clause.first, collapse.clause.last + 1, collapse.replacement)
+        }
+        return builder.toString()
+    }
+
+    /**
+     * The bracket-free spelling of [leaf].
+     *
+     * Which separator it uses is the leaf's to say, not a style choice: a `.`
+     * walks the module tree and a `::` reaches inside a module, so a leaf that
+     * was selected keeps its `::` and one that was walked to keeps its dots.
+     */
+    private fun spell(leaf: AzoraImports.Leaf): String = when {
+        leaf.isWildcard -> "${leaf.path}::*"
+        leaf.isSelection -> "${leaf.container}::${leaf.name}"
+        else -> leaf.path
     }
 
     /** `path.[a, b]` / `path::[a, b]`, or the one-name form, or nothing. */

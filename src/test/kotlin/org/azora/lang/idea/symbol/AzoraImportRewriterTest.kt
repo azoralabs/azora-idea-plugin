@@ -154,4 +154,87 @@ class AzoraImportRewriterTest {
         val source = "import std.container::*\n\nfunc main() {}"
         assertTrue("import std.container::*" in narrow(source), narrow(source))
     }
+
+    // -- groups of one -------------------------------------------------------
+
+    private fun collapse(source: String): String = AzoraImportRewriter.collapseRedundantGroups(source)
+
+    @Test
+    fun `a selection group of one loses its brackets`() {
+        assertEquals("import std.io::println\n", collapse("import std.io::[println]\n"))
+    }
+
+    @Test
+    fun `a module group of one loses its brackets`() {
+        assertEquals("import std.container.list\n", collapse("import std.container.[list]\n"))
+    }
+
+    @Test
+    fun `the brace spelling collapses too`() {
+        assertEquals("import std.io::println\n", collapse("import std.io::{println}\n"))
+    }
+
+    @Test
+    fun `a group of one spanning lines collapses onto one`() {
+        assertEquals("import std.io::println\n", collapse("import std.io::[\n    println\n]\n"))
+    }
+
+    @Test
+    fun `a starred member keeps its star`() {
+        assertEquals("import std.container.array::*\n", collapse("import std.container.[array::*]\n"))
+    }
+
+    @Test
+    fun `a nested group of one flattens to the path it names`() {
+        assertEquals("import std.container.list\n", collapse("import std.[container.[list]]\n"))
+    }
+
+    @Test
+    fun `a clause's modifier is kept`() {
+        assertEquals("export import std.io::println\n", collapse("export import std.io::[println]\n"))
+    }
+
+    @Test
+    fun `use is not an import keyword`() {
+        // `use` was dropped from the language, so a line opening with it is not
+        // a clause and nothing about it is rewritten.
+        val source = "use std.io::[println]\n"
+        assertEquals(source, collapse(source))
+    }
+
+    @Test
+    fun `a group of two is left alone`() {
+        val source = "import std.io::[println, print]\n"
+        assertEquals(source, collapse(source))
+    }
+
+    @Test
+    fun `a group carrying a comment is left alone`() {
+        // The comment says why the name is in the list; collapsing the clause
+        // onto one line would take it with the brackets.
+        val source = "import std.io::[\n    println // the only one used\n]\n"
+        assertEquals(source, collapse(source))
+    }
+
+    @Test
+    fun `an import with no group is left alone`() {
+        val source = "import std.io::println\nimport std.io::*\nimport std.container.list\n"
+        assertEquals(source, collapse(source))
+    }
+
+    @Test
+    fun `several groups of one all collapse`() {
+        assertEquals(
+            "import std.io::println\nimport std.container.list\n",
+            collapse("import std.io::[println]\nimport std.container.[list]\n"),
+        )
+    }
+
+    @Test
+    fun `the reported brackets cover the group and nothing else`() {
+        val source = "import std.io::[println]\n"
+        val collapse = AzoraImportRewriter.redundantGroups(source).single()
+        assertEquals("[println]", source.substring(collapse.brackets.first, collapse.brackets.last + 1))
+        assertEquals("import std.io::[println]", source.substring(collapse.clause.first, collapse.clause.last + 1))
+    }
 }

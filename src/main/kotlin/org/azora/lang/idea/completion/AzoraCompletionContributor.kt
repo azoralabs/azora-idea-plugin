@@ -415,10 +415,12 @@ class AzoraCompletionContributor : CompletionContributor() {
             }
 
             val visible = service.getAllVisibleSymbols(project, filePath, source)
+            val reach = ImportReach(source, service.moduleOfFile(source), filePath)
             for (symbol in visible) {
-                if (symbol.kind in TOP_LEVEL_KINDS) result.addElement(lookupFor(symbol))
+                if (symbol.kind !in TOP_LEVEL_KINDS) continue
+                result.addElement(reach.withImport(lookupFor(symbol), symbol))
             }
-            addUnimportedCompletions(service, filePath, source, project, visible, result)
+            addUnimportedCompletions(service, filePath, source, project, visible, reach, result)
         }
 
         /**
@@ -438,6 +440,7 @@ class AzoraCompletionContributor : CompletionContributor() {
             source: String,
             project: Project,
             visible: List<SymbolInfo>,
+            reach: ImportReach,
             result: CompletionResultSet,
         ) {
             // Only once something is being typed. With an empty prefix this is
@@ -457,19 +460,11 @@ class AzoraCompletionContributor : CompletionContributor() {
                 // finds `HashMap`. A case-sensitive `startsWith` hid every type
                 // in the project behind its own first letter.
                 if (symbol.name in inScope || !result.prefixMatcher.prefixMatches(symbol.name)) continue
-                if (AzoraAutoImport.importEdit(source, module) == null) continue
+                if (AzoraAutoImport.importEdit(source, module, symbol.name) == null) continue
                 offered++
                 result.addElement(
                     PrioritizedLookupElement.withPriority(
-                        lookupFor(symbol)
-                            .withTypeText(module, true)
-                            .withInsertHandler { context, _ ->
-                                val edit = AzoraAutoImport.importEdit(context.document.text, module)
-                                if (edit != null) {
-                                    AzoraAutoImport.apply(context.document, edit)
-                                    context.commitDocument()
-                                }
-                            },
+                        reach.withImport(lookupFor(symbol).withTypeText(module, true), symbol),
                         UNIMPORTED_PRIORITY,
                     ),
                 )
@@ -592,7 +587,7 @@ class AzoraCompletionContributor : CompletionContributor() {
             val VARIANT_OWNERS = setOf(SymbolKind.ENUM, SymbolKind.FAIL, SymbolKind.SLOT)
 
             val BRIDGE_TARGET = Regex("""\bbridge\s*\.\s*\w*$""")
-            val IMPORT_LINE = Regex("""(?:export\s+)?(?:import|use)\s+[\w.:\[\]{}*,\s]*""")
+            val IMPORT_LINE = Regex("""(?:export\s+)?import\s+[\w.:\[\]{}*,\s]*""")
 
             /** An open group, bracket or brace, with the base it hangs off. */
             val GROUPED_IMPORT = Regex("""^([\w.]+)(?:\.|::)[\[{]([^\]}]*)$""", RegexOption.DOT_MATCHES_ALL)
@@ -602,6 +597,72 @@ class AzoraCompletionContributor : CompletionContributor() {
 
             /** Templates need at least this much prefix before they are offered. */
             const val MIN_SNIPPET_PREFIX = 2
+        }
+    }
+}
+
+/**
+ * What a file's imports already reach, read once per completion.
+ *
+ * Every name offered asks the same question, and the answer depends only on the
+ * clauses at the top of the file. Reading them once a keystroke rather than once
+ * a name is the difference between a list and a pause.
+ *
+ * @param ownModule the module this file declares - its own names need no clause.
+ * @param filePath the file completing, whose own declarations need none either.
+ */
+internal class ImportReach(
+    source: String,
+    private val ownModule: String?,
+    private val filePath: String,
+) {
+    /** Modules taken whole - every name in them is already in reach. */
+    private val whole = AzoraImports.wholeModules(source)
+
+    /** The single names each module is reached into for. */
+    private val selected = AzoraImports.selections(source)
+
+    /**
+     * [element] with the import its symbol needs written alongside it.
+     *
+     * Reaching one name out of a module makes the module itself visible, so the
+     * rest of its names are offered here — `import std.io::println` is what puts
+     * `print` in the list. Accepting one of them has to write the clause that
+     * makes it real, or completion leaves code that does not compile: `println`
+     * and `print` become `import std.io::[println, print]`, which is what the
+     * author would have written by hand.
+     *
+     * A name that needs no clause is returned untouched.
+     */
+    fun withImport(element: LookupElementBuilder, symbol: SymbolInfo): LookupElementBuilder {
+        val module = symbol.modulePath?.takeIf { needsImport(symbol) } ?: return element
+        return element.withInsertHandler { context, _ ->
+            // Asked again of the document as it stands: the text has moved on
+            // since the list was built, and the clause is written into what is
+            // there now.
+            val edit = AzoraAutoImport.importEdit(context.document.text, module, symbol.name)
+            if (edit != null) {
+                AzoraAutoImport.apply(context.document, edit)
+                context.commitDocument()
+            }
+        }
+    }
+
+    /**
+     * Whether writing [symbol] here needs a clause written with it.
+     *
+     * Reachability is read strictly, which is not how the same file is coloured:
+     * seeing a module is enough to know what a name *is*, and only an import
+     * makes it something this file may write. A clause that selects brings in
+     * what it selects and nothing else, which is what makes the second name out
+     * of a module a second answer rather than the first one having covered it.
+     */
+    fun needsImport(symbol: SymbolInfo): Boolean {
+        val module = symbol.modulePath ?: return false
+        return when {
+            symbol.isAutoImported || module == ownModule || symbol.filePath == filePath -> false
+            module in whole -> false
+            else -> symbol.name !in selected[module].orEmpty()
         }
     }
 }

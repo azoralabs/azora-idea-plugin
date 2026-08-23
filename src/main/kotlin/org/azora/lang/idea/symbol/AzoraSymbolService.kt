@@ -17,6 +17,7 @@
 package org.azora.lang.idea.symbol
 
 import org.azora.lang.idea.AzoraFileType
+import org.azora.lang.idea.AzoraLanguageFacts
 import org.azora.lang.idea.build.AzoraManifestReader
 import org.azora.lang.idea.build.AzoraProjectConfigService
 import org.azora.lang.idea.project.AzoraSdkSettings
@@ -483,27 +484,43 @@ class AzoraSymbolService(private val project: Project? = null) {
      * what the imports name are in scope; anything else is written but not
      * reachable, and the answer is one line at the top of the file.
      *
+     * A clause that selects brings in what it selects and nothing else:
+     * `import std.traits::PartialEqual` leaves `Equal` beside it still
+     * unimported, which is what makes adding the second name a second answer
+     * rather than the first one having silently covered it.
+     *
      * [used] is the set of names the file actually writes, so nothing is
      * computed for the thousands of names it does not.
      */
     fun unimportedNames(project: Project?, filePath: String, content: String, used: Set<String>): Map<String, String> {
         if (project == null || used.isEmpty()) return emptyMap()
-        val imports = importedModulePaths(content) + qualifiedModulePaths(content)
+        val whole = wholeModuleImports(content) + qualifiedModulePaths(content)
+        val selected = AzoraImports.selections(content)
         val ownModule = moduleOf(content)
 
         val inScope = linkedSetOf<String>()
         fun declare(symbol: SymbolInfo) {
             inScope.add(symbol.name)
-            symbol.members.forEach(::declare)
+            // A variant is reached through its type - `.Equal`, `Compare.Equal` -
+            // so its bare name is not a name this file has in scope. Counting it
+            // was what hid `Equal` the spec behind `Compare.Equal` the variant.
+            symbol.members.filter { it.kind != SymbolKind.VARIANT }.forEach(::declare)
         }
         getSymbolsForFile(filePath, content).forEach(::declare)
         for (symbol in getProjectSymbols(project, filePath)) {
             val module = symbol.modulePath
-            if (symbol.isAutoImported || (module != null && module == ownModule) || moduleVisible(module, imports)) {
+            if (symbol.isAutoImported ||
+                (module != null && module == ownModule) ||
+                moduleVisible(module, whole) ||
+                (module != null && symbol.name in selected[module].orEmpty())
+            ) {
                 declare(symbol)
             }
         }
-        stdlibSymbols(imports).forEach(::declare)
+        stdlibSymbols(whole).forEach(::declare)
+        for ((module, names) in selected) {
+            symbolsOfModule(project, module).filter { it.name in names }.forEach(::declare)
+        }
 
         val result = LinkedHashMap<String, String>()
         for (symbol in getImportableSymbols(project, filePath)) {
@@ -636,6 +653,18 @@ class AzoraSymbolService(private val project: Project? = null) {
         }
         return imported
     }
+
+    /**
+     * The modules a source unit takes *whole*, as opposed to reaching into.
+     *
+     * [importedModulePaths] answers "which modules did this file mention",
+     * which is the right question for colouring a path and the wrong one for
+     * deciding what compiles: `import std.traits::Equal` mentions `std.traits`
+     * and brings in one name out of it. What the rest of the module needs is
+     * its own clause, and only [AzoraImports.selections] knows the difference.
+     */
+    internal fun wholeModuleImports(source: String): Set<String> =
+        AzoraImports.wholeModules(source).filterTo(linkedSetOf(), ::validImportPath)
 
     /** A module is visible after importing it, one of its items, or a namespace wildcard. */
     private fun moduleVisible(module: String?, imports: Set<String>): Boolean {
@@ -934,7 +963,7 @@ class AzoraSymbolService(private val project: Project? = null) {
             val addedBefore = result.size
 
             when {
-                trimmed.startsWith("use ") || trimmed.startsWith("import ") -> {
+                trimmed.startsWith("import ") -> {
                     val name = trimmed.substringAfter(' ').trim()
                     result.add(SymbolInfo(name, SymbolKind.USE, line = lineNum, offset = declarationOffset(name.substringBefore('.')), filePath = filePath, documentation = documentation))
                 }
@@ -2031,7 +2060,7 @@ class AzoraSymbolService(private val project: Project? = null) {
     }
 
     /**
-     * The type of a float literal, which is `Double` wherever nothing says
+     * The type of a float literal, which is `Float` wherever nothing says
      * otherwise.
      *
      * A literal carries no width - the suffixes are gone and the target names
@@ -2040,5 +2069,5 @@ class AzoraSymbolService(private val project: Project? = null) {
      * user could not write down.
      */
     @Suppress("UNUSED_PARAMETER")
-    private fun floatLiteralType(text: String): String = "Double"
+    private fun floatLiteralType(text: String): String = AzoraLanguageFacts.DEFAULT_FLOAT_TYPE
 }

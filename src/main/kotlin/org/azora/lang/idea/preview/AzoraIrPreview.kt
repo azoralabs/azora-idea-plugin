@@ -18,8 +18,11 @@ package org.azora.lang.idea.preview
 
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.editor.Document
+import com.intellij.openapi.editor.EditorFactory
 import com.intellij.openapi.editor.event.DocumentEvent
 import com.intellij.openapi.editor.event.DocumentListener
+import com.intellij.openapi.editor.ex.EditorEx
+import com.intellij.openapi.editor.highlighter.EditorHighlighterFactory
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.fileEditor.FileEditor
 import com.intellij.openapi.fileEditor.FileEditorState
@@ -27,11 +30,9 @@ import com.intellij.openapi.fileEditor.FileEditorStateLevel
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.UserDataHolderBase
 import com.intellij.openapi.vfs.VirtualFile
-import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTabbedPane
-import com.intellij.ui.components.JBTextArea
 import com.intellij.util.Alarm
-import java.awt.Font
+import org.azora.lang.idea.AzoraFileType
 import java.beans.PropertyChangeListener
 import java.io.File
 import javax.swing.JComponent
@@ -57,8 +58,8 @@ class AzoraIrPreview(
     private val optimized = pane()
 
     private val tabs = JBTabbedPane().apply {
-        addTab("IR", JBScrollPane(generated))
-        addTab("Optimized IR", JBScrollPane(optimized))
+        addTab("IR", generated.component)
+        addTab("Optimized IR", optimized.component)
     }
 
     /**
@@ -83,9 +84,30 @@ class AzoraIrPreview(
         schedule(immediate = true)
     }
 
-    private fun pane() = JBTextArea().apply {
-        isEditable = false
-        font = Font(Font.MONOSPACED, Font.PLAIN, font.size)
+    /**
+     * A read-only editor, coloured as Azora.
+     *
+     * The IR *is* Azora - `fin value: __Tuple_Int_String_Double = …` is a
+     * declaration a reader reads the same way as the one it came from - so it
+     * is shown through the same highlighter rather than as a wall of grey text
+     * beside a coloured file.
+     */
+    private fun pane(): EditorEx {
+        val factory = EditorFactory.getInstance()
+        val editor = factory.createViewer(factory.createDocument(""), project) as EditorEx
+        editor.highlighter = EditorHighlighterFactory.getInstance()
+            .createEditorHighlighter(project, AzoraFileType.INSTANCE)
+        editor.settings.apply {
+            isLineNumbersShown = false
+            isLineMarkerAreaShown = false
+            isFoldingOutlineShown = false
+            isIndentGuidesShown = false
+            isRightMarginShown = false
+            isCaretRowShown = false
+            additionalLinesCount = 0
+            additionalColumnsCount = 0
+        }
+        return editor
     }
 
     private fun document(): Document? = FileDocumentManager.getInstance().getDocument(file)
@@ -110,15 +132,18 @@ class AzoraIrPreview(
         }
     }
 
-    private fun show(area: JBTextArea, text: String) {
-        val caret = area.caretPosition.coerceAtMost(text.length)
-        area.text = text
-        area.caretPosition = caret.coerceAtMost(area.document.length)
+    /** Refills [editor], keeping the reader where they were in it. */
+    private fun show(editor: EditorEx, text: String) {
+        val caret = editor.caretModel.offset
+        ApplicationManager.getApplication().runWriteAction {
+            editor.document.setText(text)
+        }
+        editor.caretModel.moveToOffset(caret.coerceIn(0, editor.document.textLength))
     }
 
     override fun getComponent(): JComponent = tabs
 
-    override fun getPreferredFocusedComponent(): JComponent = generated
+    override fun getPreferredFocusedComponent(): JComponent = generated.contentComponent
 
     override fun getName(): String = "Azora IR"
 
@@ -137,13 +162,18 @@ class AzoraIrPreview(
     override fun getFile(): VirtualFile = file
 
     /**
-     * Nothing of its own to release.
+     * The two viewers, which the platform does not own.
      *
      * The alarm and the document listener were registered against this editor,
-     * so the platform disposes them with it; disposing it again from here is
-     * the same call arriving twice.
+     * so the platform disposes them with it. An editor made by [EditorFactory]
+     * is released by whoever made it, and leaking one leaks its document and
+     * every listener on it.
      */
-    override fun dispose() = Unit
+    override fun dispose() {
+        val factory = EditorFactory.getInstance()
+        factory.releaseEditor(generated)
+        factory.releaseEditor(optimized)
+    }
 
     private companion object {
         const val REFRESH_DELAY_MS = 700

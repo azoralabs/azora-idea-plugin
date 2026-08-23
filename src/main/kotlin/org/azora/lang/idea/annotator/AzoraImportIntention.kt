@@ -80,7 +80,7 @@ class AzoraImportIntention : IntentionAction {
         if (file == null) return
         val documents = PsiDocumentManager.getInstance(project)
         val document = editor?.document ?: documents.getDocument(file) ?: return
-        val edit = AzoraAutoImport.importEdit(document.text, candidate.module) ?: return
+        val edit = AzoraAutoImport.importEdit(document.text, candidate.module, candidate.symbol.name) ?: return
         AzoraAutoImport.apply(document, edit)
         documents.commitDocument(document)
     }

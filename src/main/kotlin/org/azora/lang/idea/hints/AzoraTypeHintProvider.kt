@@ -17,6 +17,7 @@
 package org.azora.lang.idea.hints
 
 import org.azora.lang.idea.AzoraFile
+import org.azora.lang.idea.AzoraLanguageFacts
 import org.azora.lang.idea.AzoraTokenTypes
 import org.azora.lang.idea.symbol.AzoraSymbolService
 import org.azora.lang.idea.symbol.SymbolInfo
@@ -236,8 +237,8 @@ private class AzoraTypeHintCollector : SharedBypassCollector {
     private fun literalType(element: PsiElement): String? = when (element.node?.elementType) {
         // A literal carries no width of its own: the suffixes are gone and the
         // target names the width. Standing alone, a literal is the default.
-        AzoraTokenTypes.INT_LITERAL -> "Int"
-        AzoraTokenTypes.REAL_LITERAL -> "Double"
+        AzoraTokenTypes.INT_LITERAL -> AzoraLanguageFacts.DEFAULT_INT_TYPE
+        AzoraTokenTypes.REAL_LITERAL -> AzoraLanguageFacts.DEFAULT_FLOAT_TYPE
         AzoraTokenTypes.STRING_LITERAL, AzoraTokenTypes.RAW_STRING_LITERAL -> "String"
         AzoraTokenTypes.CHAR_LITERAL -> "Char"
         AzoraTokenTypes.KEYWORD -> if (element.text == "true" || element.text == "false") BOOL_TYPE else null

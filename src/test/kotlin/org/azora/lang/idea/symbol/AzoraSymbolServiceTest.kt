@@ -395,10 +395,10 @@ class AzoraSymbolServiceTest {
     }
 
     @Test
-    fun `extracts use declarations`() {
+    fun `extracts import declarations`() {
         val source = """
-            use std.io
-            use std.{math, concurrency}
+            import std.io
+            import std.{math, concurrency}
         """.trimIndent()
         val symbols = service.getSymbolsForFile("test.az", source)
         val uses = symbols.filter { it.kind == SymbolKind.USE }

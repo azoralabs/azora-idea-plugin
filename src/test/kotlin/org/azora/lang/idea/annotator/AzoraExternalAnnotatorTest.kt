@@ -306,6 +306,45 @@ class AzoraExternalAnnotatorTest {
     }
 
     @Test
+    fun `an inferred constructor fix keeps the string arguments it was given`() {
+        // The checks run over a copy of the source with strings blanked out, so
+        // brackets inside a literal cannot be miscounted. A fix built from that
+        // copy hands back the blanks: `Sheep(name: "Dolly")` came out as
+        // `.(name:        )` with the literal spaced away.
+        val source = """var dolly = Sheep(name: "Dolly")"""
+        val diagnostic = annotate(source).single { "inferred constructor" in it.message }
+
+        assertEquals("""var dolly: Sheep = .(name: "Dolly")""", diagnostic.fixes.single().replacement)
+    }
+
+    @Test
+    fun `an inferred constructor fix keeps every kind of literal`() {
+        for (argument in listOf(""""a, b"""", """'x'""", """"()"""", """"say \"hi\""""")) {
+            val source = "var v = Box(value: $argument)"
+            val fix = annotate(source).single { "inferred constructor" in it.message }.fixes.single()
+
+            assertEquals("var v: Box = .(value: $argument)", fix.replacement, "argument was $argument")
+        }
+    }
+
+    @Test
+    fun `a group of one name is reported with the bare name as a fix`() {
+        val source = "import std.io::[println]\n"
+        val diagnostic = annotate(source).single { "no brackets" in it.message }
+
+        assertEquals(HighlightSeverity.WEAK_WARNING, diagnostic.severity)
+        assertEquals("[println]", source.substring(diagnostic.range.startOffset, diagnostic.range.endOffset))
+        val fix = diagnostic.fixes.single()
+        assertEquals("import std.io::println", fix.replacement)
+        assertEquals("import std.io::[println]", source.substring(fix.range!!.startOffset, fix.range!!.endOffset))
+    }
+
+    @Test
+    fun `a group of two names is not reported`() {
+        assertTrue(annotate("import std.io::[println, print]\n").none { "no brackets" in it.message })
+    }
+
+    @Test
     fun `a wildcard import of a known package is accepted`() {
         val info = AzoraAnnotationInfo(
             "import std.container.*\n",
@@ -1255,6 +1294,47 @@ class AzoraExternalAnnotatorTest {
         val warnings = annotateAll(source).filter { it.message.endsWith(NEVER_USED) }.map { it.message }
 
         assertEquals(listOf("Binding 'unusedValue' is never used"), warnings)
+    }
+
+    @Test
+    fun `the kind may be given positionally`() {
+        val source = """
+            @Supress(.Unused)
+            module app.main
+
+            enum LogLevel {
+                Debug
+                Todo
+            }
+        """.trimIndent()
+
+        val warnings = annotateAll(source).filter { it.message.endsWith(NEVER_USED) }.map { it.message }
+
+        assertTrue(warnings.isEmpty(), "$warnings")
+    }
+
+    @Test
+    fun `a modifier between the row and the header does not break the sweep`() {
+        val source = """
+            @Supress(.Unused)
+            exposed module std.core
+
+            bridge enum LogLevel {
+                /** Detailed diagnostic information. */
+                Debug
+
+                /** A trace marking unfinished implementation work. */
+                Todo
+            }
+
+            bridge spec Cast<TO> {
+                prop castValue<TO>[self&]: TO
+            }
+        """.trimIndent()
+
+        val warnings = annotateAll(source).filter { it.message.endsWith(NEVER_USED) }.map { it.message }
+
+        assertTrue(warnings.isEmpty(), "$warnings")
     }
 
     // ── Decorator declarations ─────────────────────────────────────────

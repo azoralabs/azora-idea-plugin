@@ -4,7 +4,7 @@
 
 ### Two new views
 
-- The IR beside the source. An `.az` file opens as an editor with a preview, the way a Markdown file does, showing what the compiler makes of it in two tabs: **IR** and **Optimized IR**. It refreshes shortly after typing stops, from the buffer as it stands rather than its last save, and shows only *this file's* declarations - a full dump is mostly the standard library the file reached. The compiler is asked rather than imitated, so the pane never disagrees with a build.
+- The IR beside the source. An `.az` file opens as an editor with a preview, the way a Markdown file does, showing what the compiler makes of it in two tabs: **IR** and **Optimized IR**. It refreshes shortly after typing stops, from the buffer as it stands rather than its last save, and shows only *this file's* declarations - a full dump is mostly the standard library the file reached. The compiler is asked rather than imitated, so the pane never disagrees with a build. Both panes are editors coloured as Azora: the IR is Azora, and reads like it.
 - Doc comments render in place. A `/** … */` is drawn as formatted text and turns back into source the moment the caret enters it (*Editor | General | Appearance | Render documentation comments*). The licence header at the top of a file now folds by default, as it does in every other language.
 
 ### Imports
@@ -12,6 +12,10 @@
 - One reader for the whole import grammar, so completion, navigation, Optimize Imports and highlighting agree. A group written across several lines, or with a comment in it, is now read correctly; before, everything it selected was uncoloured and unnavigable.
 - **Optimize Imports** narrows `import path::*` to what the file actually uses. It never touches an explicit import, and leaves a wildcard alone when the index knows nothing about its module - silently dropping a dependency is the failure nobody notices.
 - Completion offers names that are not imported yet, tagged with the module that declares them, and writes the import in the same keystroke. Alt-Enter does the same for a name already written.
+- An import that is written for you names what it brings in: `import std.traits::PartialEqual`. A second name out of the same module joins the clause that is already there - `import std.traits::[PartialEqual, Equal]` - rather than opening a second clause about one module.
+- A `::` clause reaches the names it selects and no others, so `Equal` beside an imported `PartialEqual` is still reported until it has been asked for too.
+- The first import of a file is written with the blank line above and below it that the rest of the block has.
+- A variant is reached through its type, so `Compare.Equal` no longer counts as having the name `Equal` in scope - which is what hid the spec of that name.
 - Go-to-definition works on the segments of an import path.
 
 ### Errors for undefined symbols
@@ -29,9 +33,12 @@
 - Borrowing: writing through a `[self&]` is an error with the exclusive borrow as its fix; a `[self!]` that never writes is a weak warning with the shared one; a receiver nothing reaches is reported; and inside an `impl` the receiver's type is always `Self`, so writing it is reported as saying nothing.
 - Style, each with a fix: `i += 1` becomes `i++`; a run of `purge` statements becomes one `purge [a, b, c]`; a one-line `func`, `prop` or block body moves onto its own line; `[a: Int, b: Int]` becomes `[a, b]: Int`; a repeated initializer `= [0, 0, 0]` becomes `= 0`; a `when` arm holding one statement drops its braces; a constructor that only restates the defaults is reported as redundant; a property that is one expression is offered in its short form.
 - Unused locals, parameters and members are reported (never dimmed - a colour says what a name *is*, and whether anyone calls it is a different question).
+- A declaration with no body - a `spec` member, a `bridge func` - no longer adopts the next declaration's block as its own. Everything in that block answered to the wrong owner, which is what made `@Supress(.Unused)` on a module header miss the enum cases and spec members below it.
 
 ### Colours
 
+- There are no contextual keywords. The compiler's lexer answers `keywords[text] ?: IDENTIFIER` and nothing else, so `derives`, `where`, `assoc`, `requires`, `binds`, `includes`, `module`, `union`, `async`, `escaping`, `lend` and `seal` are keywords wherever they are written - `pack Point derives (Equal, Hash, Display)` is coloured like `pack Point derives [Equal]`, and neither depends on the editor recognising the shape of the header. The one allowance is the parser's own: the thirteen keywords `consumeIdentifierLike` accepts as a name (`take`, `union`, `error`, `test`, `prop`, …) still read as names after a `.` or a declaration head.
+- `__int`, `__uint` and `__float` read as the keywords they are, not as types: no `.az` source declares them, and nothing else may be spelled with their `__`.
 - `prop` names read as any other name - the ordinary foreground, italic and underlined - rather than a brighter white than the fields beside them.
 - Parameters are a light grey-blue; generic type parameters take the macro colour; error cases are redder; a `${…}` macro hole is gold including its braces.
 - A `@Deprecated` declaration is struck through wherever its name appears, over whatever colour it already had.

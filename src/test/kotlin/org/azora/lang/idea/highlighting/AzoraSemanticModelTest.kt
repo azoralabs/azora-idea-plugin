@@ -183,6 +183,40 @@ class AzoraSemanticModelTest {
     }
 
     @Test
+    fun `a variant payload's field names are bindings`() {
+        // `Expr(source: String)` declares a slot called `source`. Read as a
+        // reference it is a name nothing declares, which is what made a payload
+        // field report itself undeclared.
+        val source = listOf(
+            "variant enum StringPart {",
+            "    /** A literal text chunk of an interpolated string. */",
+            "    Literal(text: String)",
+            "    /** An embedded expression, as raw source text. */",
+            "    Expr(source: String)",
+            "}",
+        ).joinToString("\n")
+
+        val bound = AzoraSemanticModel.boundNames(tokensOf(source))
+
+        for (name in listOf("text", "source")) {
+            assertTrue(name in bound, "'$name' is a payload slot, not a reference; bound = $bound")
+        }
+    }
+
+    @Test
+    fun `a loop variable's declared type is not a binding`() {
+        // `for span: Duration in spans` binds `span` and names `Duration`.
+        // Counting the type as a binding would make it a name the file declares,
+        // which silences every check that asks whether it is declared at all.
+        val bound = AzoraSemanticModel.boundNames(
+            tokensOf("func f(spans: Array<Duration>) {\n    for span: Duration in spans {}\n}"),
+        )
+
+        assertTrue("span" in bound, "the row is bound; bound = $bound")
+        assertTrue("Duration" !in bound, "the row's type is named, not bound; bound = $bound")
+    }
+
+    @Test
     fun `every spec in a derives list reads as a spec`() {
         val source = "bridge pack Char derives [PartialEqual, Equal, Order, Hash]"
         val symbols = AzoraSemanticSymbols(

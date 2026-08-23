@@ -193,10 +193,62 @@ class AzoraFoldingBuilder : FoldingBuilderEx() {
     // -----------------------------------------------------------------------
 
     /**
+     * One foldable block comment: where it sits and what it collapses to.
+     *
+     * @param range the whole comment, opener through closer.
+     * @param placeholder what a reader sees in its place when it is folded.
+     */
+    internal data class CommentFold(val range: IntRange, val placeholder: String)
+
+    /**
+     * Every block comment in [text] that spans more than one line.
+     *
+     * Nesting is handled, so an opener written inside a comment does not end
+     * it early. Pure text in, pure text out, so the rule is testable without a
+     * document - the descriptors are only the part that hands the answer to the
+     * platform.
+     */
+    internal fun blockCommentFolds(text: String): List<CommentFold> {
+        val folds = mutableListOf<CommentFold>()
+        var i = 0
+        while (i < text.length - 1) {
+            if (text[i] != '/' || text[i + 1] != '*') {
+                i++
+                continue
+            }
+            val startOffset = i
+            val isDoc = i + 2 < text.length && text[i + 2] == '*'
+
+            // Find the matching close, handling nesting
+            i += 2
+            var depth = 1
+            while (i < text.length - 1 && depth > 0) {
+                if (text[i] == '/' && text[i + 1] == '*') { depth++; i += 2 }
+                else if (text[i] == '*' && text[i + 1] == '/') { depth--; i += 2 }
+                else i++
+            }
+            if (depth > 0) i = text.length
+            val endOffset = i
+            if (text.substring(startOffset, endOffset).contains('\n')) {
+                folds.add(
+                    CommentFold(
+                        startOffset until endOffset,
+                        if (isDoc) "/** ... */" else "/* ... */",
+                    )
+                )
+            }
+        }
+        return folds
+    }
+
+    /**
      * Folds multi-line block comments and doc comments.
      *
-     * Handles nested block comments correctly. Doc comments get a
-     * doc-comment placeholder, regular block comments get a block-comment placeholder.
+     * A doc comment folds exactly as an ordinary block comment does, and so
+     * does the licence at the top of a file: every one of them is a region a
+     * reader may open and close at will. Nothing here is ever built
+     * *non-expandable* - a region that cannot be opened is a region that has
+     * eaten the text, which is what the licence header used to do.
      *
      * @param text the full document text.
      * @param document the document for line number lookups.
@@ -209,40 +261,16 @@ class AzoraFoldingBuilder : FoldingBuilderEx() {
         root: PsiElement,
         descriptors: MutableList<FoldingDescriptor>
     ) {
-        var i = 0
-        while (i < text.length - 1) {
-            if (text[i] == '/' && text[i + 1] == '*') {
-                val startOffset = i
-                val isDoc = i + 2 < text.length && text[i + 2] == '*'
-
-                // Find the matching close, handling nesting
-                i += 2
-                var depth = 1
-                while (i < text.length - 1 && depth > 0) {
-                    if (text[i] == '/' && text[i + 1] == '*') { depth++; i += 2 }
-                    else if (text[i] == '*' && text[i + 1] == '/') { depth--; i += 2 }
-                    else i++
-                }
-                val endOffset = i
-
-                if (document.getLineNumber(startOffset) < document.getLineNumber(endOffset - 1)) {
-                    val range = TextRange(startOffset, endOffset)
-                    val placeholder = if (isDoc) "/** ... */" else "/* ... */"
-                    // The licence at the top of a file is the same in every
-                    // file and is read once, so it starts folded - as it does
-                    // in every other language. A doc comment does not: it is
-                    // *rendered* rather than hidden, which is a different
-                    // thing the platform does with it.
-                    val header = !isDoc && text.take(startOffset).isBlank()
-                    descriptors.add(
-                        object : FoldingDescriptor(root.node, range, null, emptySet<Any>(), header) {
-                            override fun getPlaceholderText(): String = placeholder
-                        },
-                    )
-                }
-                continue
-            }
-            i++
+        for (fold in blockCommentFolds(text)) {
+            val start = fold.range.first
+            val end = fold.range.last + 1
+            if (document.getLineNumber(start) >= document.getLineNumber(end - 1)) continue
+            val placeholder = fold.placeholder
+            descriptors.add(
+                object : FoldingDescriptor(root.node, TextRange(start, end), null, emptySet<Any>(), false) {
+                    override fun getPlaceholderText(): String = placeholder
+                },
+            )
         }
     }
 
@@ -274,7 +302,7 @@ class AzoraFoldingBuilder : FoldingBuilderEx() {
 
         for ((idx, line) in lines.withIndex()) {
             val trimmed = line.trimStart()
-            if (trimmed.startsWith("use ")) {
+            if (trimmed.startsWith("import ")) {
                 if (importStart < 0) importStart = idx
                 importEnd = idx
                 importCount++

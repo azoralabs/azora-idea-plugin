@@ -88,12 +88,32 @@ class AzoraLexerTest {
     }
 
     @Test
-    fun `contextual words stay identifiers outside their grammar positions`() {
-        assertEquals(AzoraTokenTypes.IDENTIFIER, tokenizeFiltered("func module(): Unit {}").first { it.second == "module" }.first)
-        assertEquals(AzoraTokenTypes.DECLARATION_KEYWORD, tokenizeFiltered("module demo.core").first { it.second == "module" }.first)
+    fun `the compiler's own primitives are keywords`() {
+        // `__int` is a word of the language, not a type written in `.az`: no
+        // declaration can describe it, and it reads as the keyword it is.
+        for (word in listOf("__int", "__uint", "__float")) {
+            assertEquals(AzoraTokenTypes.KEYWORD, tokenizeFiltered(word).single().first, "wrong token for $word")
+        }
+        val header = tokenizeFiltered("bridge pack Int<N: __uint = 32>(__int)")
+        assertEquals(AzoraTokenTypes.KEYWORD, header.first { it.second == "__uint" }.first)
+        assertEquals(AzoraTokenTypes.KEYWORD, header.first { it.second == "__int" }.first)
+    }
+
+    @Test
+    fun `a keyword-spelled name is a name only where the parser admits one`() {
+        // `Parser.consumeIdentifierLike` names the keywords that may also be a
+        // name, and the editor reads exactly that list. Everything else is a
+        // keyword in every position.
         assertEquals(AzoraTokenTypes.IDENTIFIER, tokenizeFiltered("value.union(other)").first { it.second == "union" }.first)
+        assertEquals(AzoraTokenTypes.IDENTIFIER, tokenizeFiltered("cursor.take()").first { it.second == "take" }.first)
+        assertEquals(AzoraTokenTypes.IDENTIFIER, tokenizeFiltered("module std.error").first { it.second == "error" }.first)
+        assertEquals(AzoraTokenTypes.DECLARATION_KEYWORD, tokenizeFiltered("module demo.core").first { it.second == "module" }.first)
         assertEquals(AzoraTokenTypes.DECLARATION_KEYWORD, tokenizeFiltered("unsafe union Result {}").first { it.second == "union" }.first)
         assertEquals(AzoraTokenTypes.IDENTIFIER, tokenizeFiltered("mod std.math").first { it.second == "mod" }.first)
+
+        // Not on the list: no position turns these back into names.
+        assertEquals(AzoraTokenTypes.CONTROL_KEYWORD, tokenizeFiltered("value.derives(other)").first { it.second == "derives" }.first)
+        assertEquals(AzoraTokenTypes.CONTROL_KEYWORD, tokenizeFiltered("fin where = 1").first { it.second == "where" }.first)
     }
 
     @Test
@@ -152,8 +172,10 @@ class AzoraLexerTest {
             AzoraTokenTypes.CONTROL_KEYWORD,
             tokenizeFiltered(source).first { it.second == "binds" }.first,
         )
+        // `binds` is not one of the keywords the parser admits as a name, so a
+        // member written with it is a keyword there too - and a parse error.
         assertEquals(
-            AzoraTokenTypes.IDENTIFIER,
+            AzoraTokenTypes.CONTROL_KEYWORD,
             tokenizeFiltered("value.binds(other)").first { it.second == "binds" }.first,
         )
     }
@@ -196,8 +218,12 @@ class AzoraLexerTest {
         val functionName = tokenizeFiltered("func get(): String {}").first { it.second == "get" }
         assertEquals(AzoraTokenTypes.IDENTIFIER, functionName.first)
 
-        val propertyName = tokenizeFiltered("""spec Into<T> { func into[self: Self&](): T } use std.convert""").first { it.second == "use" }
-        assertEquals(AzoraTokenTypes.DECLARATION_KEYWORD, propertyName.first)
+        // `use` was dropped from the language; `using` is the reserved word now.
+        val dropped = tokenizeFiltered("func use(): String {}").first { it.second == "use" }
+        assertEquals(AzoraTokenTypes.IDENTIFIER, dropped.first)
+
+        val reserved = tokenizeFiltered("macro ${'$'}a @using ${'$'}b => a").first { it.second == "using" }
+        assertEquals(AzoraTokenTypes.DECLARATION_KEYWORD, reserved.first)
 
         val setterName = tokenizeFiltered("func set(value: Int) {}").first { it.second == "set" }
         assertEquals(AzoraTokenTypes.IDENTIFIER, setterName.first)
@@ -222,7 +248,7 @@ class AzoraLexerTest {
     }
 
     @Test
-    fun `where is a keyword only in declaration constraints`() {
+    fun `where is a keyword wherever it is written`() {
         val constrainedPack = tokenizeFiltered("pack Box<T> where T: Value")
         assertEquals(
             AzoraTokenTypes.CONTROL_KEYWORD,
@@ -240,25 +266,10 @@ class AzoraLexerTest {
             AzoraTokenTypes.CONTROL_KEYWORD,
             constrainedFunction.first { it.second == "where" }.first,
         )
-
-        for (source in listOf(
-            "func where(): Unit {}",
-            "func where<T>(value: T): T { return value }",
-            "func accepts(where: Int): Int { return where }",
-            "pack where<T>",
-            "fin where = 1",
-        )) {
-            assertTrue(
-                tokenizeFiltered(source)
-                    .filter { it.second == "where" }
-                    .all { it.first == AzoraTokenTypes.IDENTIFIER },
-                "`where` must remain an identifier in: $source",
-            )
-        }
     }
 
     @Test
-    fun `assoc is contextual in spec and impl headers`() {
+    fun `assoc is a keyword wherever it is written`() {
         assertTrue("assoc" in AzoraLanguageFacts.allCompletionKeywords)
         assertTrue("without" in AzoraLanguageFacts.allCompletionKeywords)
 
@@ -274,42 +285,24 @@ class AzoraLexerTest {
                 "`assoc` must be a keyword in: $source",
             )
         }
-
-        for (source in listOf(
-            "func assoc(): Unit {}",
-            "fin assoc = 1",
-            "func read(assoc: Int): Int { return assoc }",
-            "value.assoc(other)",
-            "spec assoc {}",
-            "impl Iterator for assoc {}",
-        )) {
-            assertTrue(
-                tokenizeFiltered(source)
-                    .filter { it.second == "assoc" }
-                    .all { it.first == AzoraTokenTypes.IDENTIFIER },
-                "`assoc` must remain an identifier in: $source",
-            )
-        }
     }
 
     @Test
-    fun `derives is a contextual keyword in pack headers`() {
+    fun `derives is a keyword on any header, however the list is written`() {
         assertTrue("derives" in AzoraLanguageFacts.allCompletionKeywords)
-        assertEquals(
-            AzoraTokenTypes.CONTROL_KEYWORD,
-            tokenizeFiltered("pack Player<T> derives [Copy, Hash] where T: Copy")
-                .single { it.second == "derives" }.first,
-        )
         for (source in listOf(
-            "func derives(): Unit {}",
-            "fin derives = 1",
-            "value.derives(other)",
+            "pack Player<T> derives [Copy, Hash] where T: Copy",
+            "pack Point derives (Equal, Hash, Display) { fin x: Int = 0 }",
+            "bridge pack Char derives [PartialEqual, Equal, Order, Hash]",
+            "pack Vec2(Float, Float) derives [Copy]",
+            "enum Compare derives [Hash] { Less }",
             "unsafe union Result derives [Copy] {}",
+            "pack Wide\n    derives [Copy]",
         )) {
-            assertTrue(
-                tokenizeFiltered(source).filter { it.second == "derives" }
-                    .all { it.first == AzoraTokenTypes.IDENTIFIER },
-                "`derives` must remain an identifier in: $source",
+            assertEquals(
+                AzoraTokenTypes.CONTROL_KEYWORD,
+                tokenizeFiltered(source).single { it.second == "derives" }.first,
+                "`derives` is a keyword in: $source",
             )
         }
     }

@@ -23,6 +23,7 @@ import org.azora.lang.idea.highlighting.AzoraSemanticModel
 import org.azora.lang.idea.highlighting.AzoraToken
 import org.azora.lang.idea.highlighting.AzoraSyntaxHighlighter
 import org.azora.lang.idea.symbol.AzoraAutoImport
+import org.azora.lang.idea.symbol.AzoraImportRewriter
 import org.azora.lang.idea.symbol.AzoraImports
 import org.azora.lang.idea.symbol.AzoraProjectWords
 import org.azora.lang.idea.symbol.AzoraResolver
@@ -73,6 +74,7 @@ class AzoraExternalAnnotator : ExternalAnnotator<AzoraAnnotationInfo, AzoraAnnot
             diagnostics += scan.diagnostics
             diagnostics += checkBrackets(scan)
             diagnostics += checkImports(info)
+            diagnostics += checkRedundantImportGroups(info)
             diagnostics += checkDecorators(info, code)
             diagnostics += checkNames(code)
             diagnostics += checkUnusedDeclarations(info)
@@ -191,6 +193,30 @@ class AzoraExternalAnnotator : ExternalAnnotator<AzoraAnnotationInfo, AzoraAnnot
         }
         return diagnostics
     }
+
+    /**
+     * Reports a group that brackets one name, and offers the name on its own.
+     *
+     * `import std.io::[println]` and `import std.io::println` are the same
+     * import written two ways, and a file that uses both spellings reads as
+     * though the difference meant something. The brackets earn their place when
+     * a second name joins them; until then they are punctuation.
+     */
+    private fun checkRedundantImportGroups(info: AzoraAnnotationInfo): List<AzoraDiagnostic> =
+        AzoraImportRewriter.redundantGroups(info.source).map { collapse ->
+            AzoraDiagnostic(
+                range = TextRange(collapse.brackets.first, collapse.brackets.last + 1),
+                message = "A group of one name needs no brackets: '${collapse.replacement}'",
+                severity = HighlightSeverity.WEAK_WARNING,
+                fixes = listOf(
+                    AzoraFix(
+                        "Change to '${collapse.replacement}'",
+                        collapse.replacement,
+                        TextRange(collapse.clause.first, collapse.clause.last + 1),
+                    )
+                ),
+            )
+        }
 
     /** Reports decorators that are neither compiler built-ins nor visible declarations. */
     private fun checkDecorators(info: AzoraAnnotationInfo, code: String): List<AzoraDiagnostic> {
@@ -399,7 +425,6 @@ class AzoraExternalAnnotator : ExternalAnnotator<AzoraAnnotationInfo, AzoraAnnot
             if (following?.type == AzoraTokenTypes.DOT ||
                 (following?.type == AzoraTokenTypes.OPERATOR && following.text == "::")
             ) continue
-            if (name in AzoraLanguageFacts.softKeywords) continue
             candidates.add(name)
         }
         return runCatching {
@@ -447,7 +472,7 @@ class AzoraExternalAnnotator : ExternalAnnotator<AzoraAnnotationInfo, AzoraAnnot
             // be what made that resolve.
             val before = code.lastIndexOf('.', match.range.first - 1)
             if (before >= 0 && code.substring(before + 1, match.range.first).isBlank()) continue
-            val edit = AzoraAutoImport.importEdit(info.source, module) ?: continue
+            val edit = AzoraAutoImport.importEdit(info.source, module, match.value) ?: continue
             diagnostics += AzoraDiagnostic(
                 TextRange(match.range.first, match.range.last + 1),
                 "'${match.value}' is declared in '$module' and this file does not import it",
@@ -456,7 +481,7 @@ class AzoraExternalAnnotator : ExternalAnnotator<AzoraAnnotationInfo, AzoraAnnot
                     AzoraFix(
                         "Import '${match.value}' from '$module'",
                         edit.text,
-                        TextRange(edit.offset, edit.offset),
+                        TextRange(edit.offset, edit.end),
                     )
                 ),
             )
@@ -589,7 +614,12 @@ class AzoraExternalAnnotator : ExternalAnnotator<AzoraAnnotationInfo, AzoraAnnot
             if (type.contains('.') || type.contains("::")) continue
             val declaration = match.groups[0] ?: continue
             val name = match.groupValues[2]
-            val args = match.groupValues[4]
+            // From the source, never from [code]: the checks match against a
+            // copy with every literal blanked to spaces, so that a bracket
+            // inside a string cannot be miscounted. Reading the argument list
+            // off that copy hands the blanks back - `Sheep(name: "Dolly")`
+            // became `.(name:        )` with the literal spaced away.
+            val args = match.groups[4].textIn(info.source)
             val replacement = "${match.groupValues[1]} $name: $type = .($args)"
             diagnostics += AzoraDiagnostic(
                 TextRange(declaration.range.first, declaration.range.last + 1),
@@ -1672,7 +1702,7 @@ class AzoraExternalAnnotator : ExternalAnnotator<AzoraAnnotationInfo, AzoraAnnot
 
     private companion object {
         private const val MODIFIERS = "(?:exposed|protected|confined|inline|deepinline|noinline|unsafe|threadlocal|react|async|bridge|lazy)"
-        val IMPORT_LINE = Regex("""(?m)^\s*(?:exposed\s+)?(?:import|use)\s+([^\n/]+)""")
+        val IMPORT_LINE = Regex("""(?m)^\s*(?:exposed\s+)?import\s+([^\n/]+)""")
         val FUNCTION_DECL = Regex("""(?m)^\s*(?:$MODIFIERS\s+)*func\s+([A-Za-z_$][\w$]*)""")
 
         /**

@@ -35,11 +35,18 @@ object AzoraAutoImport {
     /** A module that declares the wanted name, and the symbol it declares. */
     data class Candidate(val module: String, val symbol: SymbolInfo) {
         /** What the import line would say. */
-        val importPath: String get() = module
+        val importPath: String get() = "$module::${symbol.name}"
     }
 
-    /** An insertion to make: [text] at [offset], already newline-terminated. */
-    data class Edit(val offset: Int, val text: String)
+    /**
+     * The change to make: [text] replaces `[offset, end)`.
+     *
+     * [end] equals [offset] for the common case of writing a new clause, and
+     * spans an existing one when a name joins it - `import std.traits::Equal`
+     * beside `import std.traits::PartialEqual` would be two clauses about one
+     * module, so the first becomes `import std.traits::[PartialEqual, Equal]`.
+     */
+    data class Edit(val offset: Int, val text: String, val end: Int = offset)
 
     /**
      * Modules that would make [name] resolve, best first.
@@ -56,7 +63,7 @@ object AzoraAutoImport {
         name: String,
     ): List<Candidate> {
         if (name.isEmpty()) return emptyList()
-        val already = importedPathsWithParents(content)
+        val already = modulesAlreadyProviding(content, name)
         val service = AzoraSymbolService.getInstance(project ?: return emptyList())
         return service.getImportableSymbols(project, filePath).asSequence()
             .filter { it.name == name }
@@ -68,24 +75,37 @@ object AzoraAutoImport {
     }
 
     /**
-     * Where and what to write to import [path] into [content], or null when the
-     * file already imports it.
+     * Where and what to write so [content] reaches [symbol] in [module], or
+     * null when it already does.
      *
-     * The line goes with the other imports, in the order they are already in if
-     * they are sorted and at the end of the block if they are not - a file that
-     * keeps its imports tidy stays tidy, and one that does not is not
+     * A clause names what it brings in: `import std.traits::PartialEqual`, not
+     * `import std.traits`. The bare module path is a different clause - it
+     * walks the module tree - so importing one symbol writes the `::` form, and
+     * a second symbol out of the same module joins the clause that is already
+     * there rather than opening another one about the same module.
+     *
+     * A new line goes with the other imports, in the order they are already in
+     * if they are sorted and at the end of the block if they are not - a file
+     * that keeps its imports tidy stays tidy, and one that does not is not
      * rearranged behind the author's back.
+     *
+     * [symbol] is null only for a caller that really does mean the module
+     * itself, which is the one case the bare path is right for.
      */
-    fun importEdit(content: String, path: String): Edit? {
+    fun importEdit(content: String, module: String, symbol: String? = null): Edit? {
         val clauses = AzoraImports.clauses(content)
-        if (clauses.any { clause -> clause.leaves.any { it.path == path } }) return null
+        if (clauses.any { clause -> clause.leaves.any { it.reaches(module, symbol) } }) return null
 
+        val path = if (symbol == null) module else "$module::$symbol"
+        if (symbol != null) {
+            joinExistingClause(content, clauses, module, symbol)?.let { return it }
+        }
         val line = "import $path"
-        if (clauses.isEmpty()) return Edit(afterHeader(content), "$line\n")
+        if (clauses.isEmpty()) return Edit(headerEnd(content), openingBlock(content, line))
 
         val sorted = clauses.map { it.base }.let { it == it.sorted() }
         if (sorted) {
-            val successor = clauses.firstOrNull { it.base > path }
+            val successor = clauses.firstOrNull { it.base > module }
             if (successor != null) {
                 return Edit(lineStartOf(content, successor.start), "${successor.indent}$line\n")
             }
@@ -95,33 +115,99 @@ object AzoraAutoImport {
         return Edit(end + 1, "${last.indent}$line\n")
     }
 
+    /** Whether this leaf already brings [symbol] (or [module] itself) into reach. */
+    private fun AzoraImports.Leaf.reaches(module: String, symbol: String?): Boolean = when {
+        isWildcard -> path == module
+        isSelection -> container == module && name == symbol
+        // A bare path reaches the module, and everything in it with it.
+        else -> path == module || (symbol != null && path == "$module.$symbol")
+    }
+
     /**
-     * The paths a file imports, plus every parent of each.
+     * [symbol] added to the clause that already selects out of [module], or
+     * null when there is no such clause.
      *
-     * `import std.container.list` makes `std.container` imported for this
-     * purpose: adding `import std.container` beside it would be noise, and a
-     * name found in either is already reachable.
+     * `import std.traits::PartialEqual` + `Equal` becomes
+     * `import std.traits::[PartialEqual, Equal]`, in the order the names were
+     * asked for. A clause that takes the module whole is never touched: it
+     * already reaches the name, and narrowing it here would drop the rest.
      */
-    private fun importedPathsWithParents(content: String): Set<String> {
+    private fun joinExistingClause(
+        content: String,
+        clauses: List<AzoraImports.Clause>,
+        module: String,
+        symbol: String,
+    ): Edit? {
+        val clause = clauses.firstOrNull { candidate ->
+            candidate.leaves.isNotEmpty() &&
+                candidate.leaves.all { it.isSelection && it.container == module } &&
+                restOfLineIsBlank(content, candidate.end)
+        } ?: return null
+        val names = clause.leaves.map { it.name } + symbol
+        val selection = if (names.size == 1) names.first() else "[${names.joinToString(", ")}]"
+        return Edit(clause.start, "import $module::$selection", clause.end)
+    }
+
+    /**
+     * Whether nothing but blanks and a trailing comment follow [end] on its line.
+     *
+     * A clause the reader wrote more on - `as Alias`, `without [X]` - is left
+     * alone. Rewriting one of those from the parsed part alone would drop what
+     * the parser did not read, and a second clause is always safe.
+     */
+    private fun restOfLineIsBlank(content: String, end: Int): Boolean {
+        val lineEnd = content.indexOf('\n', end).let { if (it < 0) content.length else it }
+        val rest = content.substring(end.coerceAtMost(lineEnd), lineEnd).trim()
+        return rest.isEmpty() || rest.startsWith("//")
+    }
+
+    /**
+     * The first import of a file, with the blank lines that set it apart.
+     *
+     * A module header, a blank line, the imports, a blank line, the code: the
+     * shape every Azora file has. Whichever of the two blanks is already there
+     * is not written twice.
+     */
+    private fun openingBlock(content: String, line: String): String {
+        val at = headerEnd(content)
+        val leading = if (at == 0 || content.getOrNull(at - 2) == '\n') "" else "\n"
+        val trailing = if (at >= content.length) "" else "\n"
+        return "$leading$line\n$trailing"
+    }
+
+    /**
+     * The offset an import block starts at: after a `module` header and the
+     * blank lines below it, else the top of the file.
+     */
+    private fun headerEnd(content: String): Int {
+        val header = Regex("""(?m)^\s*(?:export\s+|exposed\s+)?module\s+[^\n]*$""").find(content) ?: return 0
+        val lineEnd = content.indexOf('\n', header.range.last).let { if (it < 0) content.length else it }
+        var at = (lineEnd + 1).coerceAtMost(content.length)
+        while (at < content.length && content[at] == '\n') at++
+        return at
+    }
+
+    /** Modules whose import already puts [name] within reach of [content]. */
+    private fun modulesAlreadyProviding(content: String, name: String): Set<String> {
         val result = linkedSetOf<String>()
-        for (path in AzoraImports.importedPaths(content)) {
-            var current = path
-            while (current.isNotEmpty()) {
-                result.add(current)
-                current = current.substringBeforeLast('.', "")
+        for (clause in AzoraImports.clauses(content)) {
+            for (leaf in clause.leaves) {
+                when {
+                    leaf.isSelection -> if (leaf.name == name) result.add(leaf.container)
+                    leaf.isWildcard -> result.add(leaf.path)
+                    else -> {
+                        // A bare path takes a module whole, so every parent of it
+                        // is a module this file already reaches through.
+                        var current = leaf.path
+                        while (current.isNotEmpty()) {
+                            result.add(current)
+                            current = current.substringBeforeLast('.', "")
+                        }
+                    }
+                }
             }
         }
         return result
-    }
-
-    /** The offset an import block should start at: after a `module` header, else at the top. */
-    private fun afterHeader(content: String): Int {
-        val header = Regex("""(?m)^\s*(?:export\s+|exposed\s+)?module\s+[^\n]*$""").find(content) ?: return 0
-        val lineEnd = content.indexOf('\n', header.range.last).let { if (it < 0) content.length else it }
-        // A blank line after the header is conventional; keep it above the imports.
-        var at = lineEnd + 1
-        while (at < content.length && content[at] == '\n') at++
-        return at.coerceAtMost(content.length)
     }
 
     private fun lineStartOf(content: String, offset: Int): Int =
@@ -129,6 +215,8 @@ object AzoraAutoImport {
 
     /** Applies [edit] to [document]. Must be called inside a write action. */
     fun apply(document: Document, edit: Edit) {
-        document.insertString(edit.offset.coerceIn(0, document.textLength), edit.text)
+        val start = edit.offset.coerceIn(0, document.textLength)
+        val end = edit.end.coerceIn(start, document.textLength)
+        document.replaceString(start, end, edit.text)
     }
 }

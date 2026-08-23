@@ -16,6 +16,7 @@
 
 package org.azora.lang.idea.symbol
 
+import org.azora.lang.idea.AzoraLanguageFacts
 import com.intellij.openapi.project.Project
 
 /**
@@ -784,14 +785,14 @@ class AzoraResolver(
         val IMPL_LINE = Regex(
             """(?m)^[ \t]*(?:(?:bridge|exposed|protected|confined|unsafe)\s+)*impl\b[^\n{]*""",
         )
-        val IMPORT = Regex("""(?m)^\s*(?:exposed\s+)?(?:import|use)\s+([^\n/]+)""")
+        val IMPORT = Regex("""(?m)^\s*(?:exposed\s+)?import\s+([^\n/]+)""")
         val GROUPED_IMPORT = Regex("""^([\w.]+)\.\{([^}]*)}""")
         val CONSTRUCTOR = Regex("""^([A-Z][\w]*)\s*(?:<[^>]+>)?\s*\(""")
         val SIGIL_PATH_SUFFIX = Regex("""@(?:[A-Za-z_$][\w$]*::)*\s*$""")
     }
 
     /**
-     * The type of a float literal, which is `Double` wherever nothing says
+     * The type of a float literal, which is `Float` wherever nothing says
      * otherwise.
      *
      * A literal carries no width - the suffixes are gone and the target names
@@ -800,5 +801,5 @@ class AzoraResolver(
      * user could not write down.
      */
     @Suppress("UNUSED_PARAMETER")
-    private fun floatLiteralType(text: String): String = "Double"
+    private fun floatLiteralType(text: String): String = AzoraLanguageFacts.DEFAULT_FLOAT_TYPE
 }

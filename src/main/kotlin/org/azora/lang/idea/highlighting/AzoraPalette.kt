@@ -131,23 +131,26 @@ object AzoraPalette {
     val PARAMETER = pair(0x4B5A6A, 0xA9B7C6)
 
     /**
-     * Context receiver parameters — the landing site's `--color-pastel-orange`,
-     * underlined.
+     * Context receiver parameters — a light orange.
      *
-     * A receiver is a value, and this orange is its own: no other role wears
-     * it. It has no token in the playground's set, which spells a receiver as
-     * plain foreground.
+     * The warm counterpart of [PARAMETER], and made the same way: hold
+     * [TYPE_PARAMETER]'s hue, lift the lightness and take most of the chroma
+     * out. A receiver and a parameter are both values a call site hands over,
+     * so they read as the same kind of thing in two temperatures — and the
+     * receiver stays the cooler-headed relative of the `T` it so often carries.
      */
-    val CONTEXT_PARAMETER = pair(0xA65310, 0xE8944A)
+    val CONTEXT_PARAMETER = pair(0x80603F, 0xDAC2A9)
 
     /**
-     * Generic type parameters — the [MACRO] purple.
+     * Generic type parameters — `--color-pastel-orange`, bold.
      *
-     * A `T` and a macro are the same kind of thing to a reader: a stand-in that
-     * something else will fill. It had an orange-red of its own, next to
-     * [CONTEXT_PARAMETER]'s, which said only that it was near a receiver.
+     * The token verbatim, and the same one the playground already spends on
+     * `.cm-azls-generic`, so a `T` is the same colour in the browser and in the
+     * IDE. It wore the [MACRO] purple for a while on the reasoning that a `T`
+     * and a macro are both stand-ins; that made every signature read as though
+     * it were half macro, and left the purple saying two things.
      */
-    val TYPE_PARAMETER = MACRO
+    val TYPE_PARAMETER = pair(0xA36C32, 0xD4A574)
 
     /**
      * The cases of an `error` declaration — a red of its own.

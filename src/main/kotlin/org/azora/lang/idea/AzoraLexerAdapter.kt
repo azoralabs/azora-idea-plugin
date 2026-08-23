@@ -793,10 +793,24 @@ class AzoraLexerAdapter : LexerBase() {
     private fun isShiftRight(tok: LexToken): Boolean =
         tok.type == AzoraTokenTypes.OPERATOR && tokenText(tok) == ">>"
 
+    /**
+     * A word is the keyword it is spelled, unless only a name can stand there.
+     *
+     * There is no third answer. The compiler's lexer is `keywords[text] ?:
+     * IDENTIFIER` and nothing else, so an editor that asked *where* a word sits
+     * before calling it a keyword was answering a question the language does
+     * not ask - and got it wrong wherever its idea of the shape was narrower
+     * than the grammar, which is what left `derives` uncoloured on a pack whose
+     * header it did not recognise.
+     *
+     * [isNamePosition] stays: it is the same allowance the parser makes with
+     * `consumeIdentifierLike`, at the two places a keyword-spelled name is
+     * legal - after a member separator, and where a declaration head can be
+     * followed by nothing but a name.
+     */
     private fun classifyWord(source: String, start: Int, word: String): IElementType {
-        if (isNamePosition(source, start, word)) return AzoraTokenTypes.IDENTIFIER
-        if (word in SOFT_KEYWORDS) {
-            return contextualKeywordType(source, start, word) ?: AzoraTokenTypes.IDENTIFIER
+        if (word in NAME_CAPABLE_KEYWORDS && isNamePosition(source, start, word)) {
+            return AzoraTokenTypes.IDENTIFIER
         }
         return KEYWORD_MAP[word] ?: AzoraTokenTypes.IDENTIFIER
     }
@@ -829,287 +843,6 @@ class AzoraLexerAdapter : LexerBase() {
         if (i < 0 || source[i] == '\n' || source[i] == '\r') return false
         if (word in DECLARATION_HEAD_WORDS) return false
         return previousWord(source, start) in DECLARATION_NAME_PREFIXES
-    }
-
-    /**
-     * Classifies a soft keyword from its surroundings.
-     *
-     * Only words whose *keyword-ness* is positional are handled here. Whether a
-     * word is a macro is never decided lexically — a name is a macro because
-     * a current `macro` declaration says so, which only the symbol index knows, so
-     * `AzoraSemanticAnnotator` colors those on a later pass.
-     */
-    private fun contextualKeywordType(source: String, start: Int, word: String): IElementType? {
-        return when (word) {
-            "where" -> if (isContextualWhere(source, start)) AzoraTokenTypes.CONTROL_KEYWORD else null
-            "module" -> if (isContextualModule(source, start)) AzoraTokenTypes.DECLARATION_KEYWORD else null
-            "union" -> if (isContextualUnion(source, start)) AzoraTokenTypes.DECLARATION_KEYWORD else null
-            "async" -> if (isContextualAsync(source, start)) AzoraTokenTypes.MODIFIER_KEYWORD else null
-            "escaping" -> if (isContextualEscaping(source, start)) AzoraTokenTypes.MODIFIER_KEYWORD else null
-            "replace" -> if (isContextualGraphClause(source, start, expectsName = true)) AzoraTokenTypes.CONTROL_KEYWORD else null
-            "includes" -> if (isContextualGraphClause(source, start, expectsName = true)) AzoraTokenTypes.CONTROL_KEYWORD else null
-            "derives" -> if (isContextualDerives(source, start)) AzoraTokenTypes.CONTROL_KEYWORD else null
-            "binds" -> if (isContextualBinds(source, start)) AzoraTokenTypes.CONTROL_KEYWORD else null
-            "requires" -> if (isContextualRequires(source, start)) AzoraTokenTypes.CONTROL_KEYWORD else null
-            "assoc" -> if (isContextualAssoc(source, start)) AzoraTokenTypes.CONTROL_KEYWORD else null
-            "lend" -> if (isContextualLend(source, start)) AzoraTokenTypes.MEMORY_KEYWORD else null
-            "seal" -> if (isContextualSeal(source, start)) AzoraTokenTypes.CONTROL_KEYWORD else null
-            else -> null
-        }
-    }
-
-    /**
-     * Returns whether `where` at [start] belongs to a declaration constraint.
-     *
-     * Azora deliberately keeps `where` contextual: it is a keyword after a
-     * callable/type header but remains a valid function, parameter, or binding
-     * name everywhere else. Walking back to the declaration head mirrors AZLS
-     * and also supports multiline headers without baking in a particular
-     * declaration shape.
-     */
-    private fun isContextualWhere(source: String, start: Int): Boolean {
-        var i = start - 1
-        var parenDepth = 0
-        var bracketDepth = 0
-        var angleDepth = 0
-        var sawDeclarationSubject = false
-
-        while (i >= 0) {
-            when (val c = source[i]) {
-                ' ', '\t', '\r', '\n' -> i--
-                ')' -> {
-                    parenDepth++
-                    i--
-                }
-                ']' -> {
-                    bracketDepth++
-                    i--
-                }
-                '>' -> {
-                    // `(T) -> K` - the `>` of an arrow closes nothing. Counted
-                    // as an angle bracket it left the real `<T, K>` unbalanced,
-                    // and `where` after such a signature lost its keyword.
-                    if (i > 0 && source[i - 1] == '-') i -= 2 else { angleDepth++; i-- }
-                }
-                '(' -> {
-                    if (parenDepth == 0) return false
-                    parenDepth--
-                    i--
-                }
-                '[' -> {
-                    if (bracketDepth == 0) return false
-                    bracketDepth--
-                    i--
-                }
-                '<' -> {
-                    if (angleDepth > 0) angleDepth-- else return false
-                    i--
-                }
-                '{', '}', ';', '=' -> {
-                    if (parenDepth == 0 && bracketDepth == 0 && angleDepth == 0) return false
-                    i--
-                }
-                else -> {
-                    if (c.isLetterOrDigit() || c == '_' || c == '$') {
-                        val end = i + 1
-                        while (i >= 0 && (source[i].isLetterOrDigit() || source[i] == '_' || source[i] == '$')) i--
-                        if (parenDepth == 0 && bracketDepth == 0 && angleDepth == 0) {
-                            val word = source.substring(i + 1, end)
-                            if (word in WHERE_DECLARATION_HEADS) return sawDeclarationSubject
-                            sawDeclarationSubject = true
-                        }
-                    } else {
-                        i--
-                    }
-                }
-            }
-        }
-        return false
-    }
-
-    /**
-     * `assoc` introduces associated names or bindings only after a complete
-     * `spec`/`impl` subject. It remains an identifier in declarations, values,
-     * parameters, and member access.
-     */
-    private fun isContextualAssoc(source: String, start: Int): Boolean {
-        val lineStart = source.lastIndexOf('\n', start - 1).let { if (it < 0) 0 else it + 1 }
-        var index = start - 1
-        var parenDepth = 0
-        var bracketDepth = 0
-        var angleDepth = 0
-        var sawSubject = false
-
-        while (index >= lineStart) {
-            when (val c = source[index]) {
-                ' ', '\t', '\r' -> index--
-                ')' -> {
-                    parenDepth++
-                    index--
-                }
-                ']' -> {
-                    bracketDepth++
-                    index--
-                }
-                '>' -> {
-                    angleDepth++
-                    index--
-                }
-                '(' -> {
-                    if (parenDepth == 0) return false
-                    parenDepth--
-                    index--
-                }
-                '[' -> {
-                    if (bracketDepth == 0) return false
-                    bracketDepth--
-                    if (parenDepth == 0 && bracketDepth == 0 && angleDepth == 0) sawSubject = true
-                    index--
-                }
-                '<' -> {
-                    if (angleDepth == 0) return false
-                    angleDepth--
-                    index--
-                }
-                '{', '}', ';', '=' -> {
-                    if (parenDepth == 0 && bracketDepth == 0 && angleDepth == 0) return false
-                    index--
-                }
-                else -> {
-                    if (c.isLetterOrDigit() || c == '_' || c == '$') {
-                        val wordEnd = index + 1
-                        while (index >= lineStart &&
-                            (source[index].isLetterOrDigit() || source[index] == '_' || source[index] == '$')
-                        ) {
-                            index--
-                        }
-                        if (parenDepth == 0 && bracketDepth == 0 && angleDepth == 0) {
-                            when (source.substring(index + 1, wordEnd)) {
-                                "spec", "impl" -> return sawSubject
-                                "for" -> if (!sawSubject) return false
-                                else -> sawSubject = true
-                            }
-                        }
-                    } else {
-                        index--
-                    }
-                }
-            }
-        }
-        return false
-    }
-
-    /** `module` is contextual and only starts a module declaration. */
-    private fun isContextualModule(source: String, start: Int): Boolean {
-        if (nextWord(source, start + "module".length) == null) return false
-        val lineStart = source.lastIndexOf('\n', start - 1).let { if (it < 0) 0 else it + 1 }
-        val prefix = source.substring(lineStart, start).trim()
-        return prefix.isEmpty() || prefix.split(Regex("\\s+")).all {
-            it in setOf("exposed", "confined")
-        }
-    }
-
-    /** `union Name` is a declaration; `value.union()` is not. */
-    private fun isContextualUnion(source: String, start: Int): Boolean {
-        if (isAfterMemberSeparator(source, start)) return false
-        var index = skipWhitespace(source, start + "union".length)
-        if (index >= source.length || !isIdentifierStart(source[index])) return false
-        index = skipIdentifier(source, index)
-        index = skipWhitespace(source, index)
-        return source.getOrNull(index) == '{' || source.getOrNull(index) == '<'
-    }
-
-    /** `async` qualifies a declaration/type/lambda, but remains a callable name in `async(...)`. */
-    private fun isContextualAsync(source: String, start: Int): Boolean {
-        if (isAfterMemberSeparator(source, start)) return false
-        val after = skipWhitespace(source, start + "async".length)
-        val next = nextWord(source, start + "async".length)
-        if (next == "func" || next == "prop") return true
-        return when (source.getOrNull(after)) {
-            '{', '[', '<' -> true
-            '(' -> isCallableTypeAt(source, after)
-            else -> false
-        }
-    }
-
-    /** `escaping` has grammar meaning only immediately before a callable type. */
-    private fun isContextualEscaping(source: String, start: Int): Boolean {
-        if (isAfterMemberSeparator(source, start)) return false
-        val after = skipWhitespace(source, start + "escaping".length)
-        return isCallableTypeAt(source, after)
-    }
-
-    /** `replace` and `includes` are clauses of a graph header only. */
-    private fun isContextualGraphClause(source: String, start: Int, expectsName: Boolean): Boolean {
-        if (isAfterMemberSeparator(source, start)) return false
-        val prefix = linePrefix(source, start)
-        if (!Regex("""(?:^|\s)graph\s+[A-Za-z_$][\w$]*(?:\s+replace\s+[A-Za-z_$][\w$]*)?\s*$""")
-                .containsMatchIn(prefix)) return false
-        val after = skipWhitespace(source, start + currentWordLength(source, start))
-        return if (expectsName) {
-            source.getOrNull(after)?.let(::isIdentifierStart) == true || source.getOrNull(after) == '['
-        } else true
-    }
-
-    /** `derives` follows the name/generics of a pack. Unions cannot derive. */
-    private fun isContextualDerives(source: String, start: Int): Boolean {
-        if (isAfterMemberSeparator(source, start)) return false
-        val declaration = DERIVES_DECLARATION.containsMatchIn(headPrefix(source, start))
-        if (!declaration) return false
-        val after = skipWhitespace(source, start + "derives".length)
-        return source.getOrNull(after)?.let(::isIdentifierStart) == true || source.getOrNull(after) == '['
-    }
-
-    /** `binds` appears on an annotation header or on a graph registration. */
-    private fun isContextualBinds(source: String, start: Int): Boolean {
-        if (isAfterMemberSeparator(source, start)) return false
-        val prefix = linePrefix(source, start)
-        // `annot @Name` - a decorator is declared with the sigil it is written
-        // with, and `binds` still belongs to that header.
-        val annotationHeader = Regex(
-            """(?:^|\s)annot\s+@[A-Za-z_$][\w$]*(?:\s+for\s+.+)?\s*$""",
-        ).containsMatchIn(prefix)
-        val graphRegistration = Regex(
-            """^\s*(?:solo|factory|scope)\s+[A-Za-z_$][\w$]*(?:\s*\([^\n]*\))?\s*$""",
-        ).matches(prefix)
-        if (!annotationHeader && !graphRegistration) return false
-        val after = skipWhitespace(source, start + "binds".length)
-        return source.getOrNull(after)?.let(::isIdentifierStart) == true || source.getOrNull(after) == '['
-    }
-
-    /** `requires` belongs to a spec header and nowhere else. */
-    private fun isContextualRequires(source: String, start: Int): Boolean {
-        if (isAfterMemberSeparator(source, start)) return false
-        val prefix = linePrefix(source, start)
-        if (!Regex("""(?:^|\s)spec\s+[A-Za-z_$][\w$]*(?:\s*<[^>{}\n]*>)?(?:\s*:\s*.+)?\s*$""")
-                .containsMatchIn(prefix)) return false
-        val after = skipWhitespace(source, start + "requires".length)
-        return source.getOrNull(after)?.let(::isIdentifierStart) == true || source.getOrNull(after) == '['
-    }
-
-    /** `lend name` is an ownership prefix; member/declaration uses keep identifier meaning. */
-    private fun isContextualLend(source: String, start: Int): Boolean {
-        if (isAfterMemberSeparator(source, start)) return false
-        val next = skipWhitespace(source, start + "lend".length)
-        return source.getOrNull(next)?.let(::isIdentifierStart) == true
-    }
-
-    /** `seal` is only parsed as the first value of a `when` branch. */
-    private fun isContextualSeal(source: String, start: Int): Boolean {
-        if (isAfterMemberSeparator(source, start)) return false
-        var previous = start - 1
-        while (previous >= 0 && source[previous].isWhitespace()) previous--
-        if (source.getOrNull(previous) == '{') {
-            previous--
-            while (previous >= 0 && source[previous].isWhitespace()) previous--
-        }
-        val followsBranchArrow = previous >= 1 && source[previous] == '>' &&
-            (source[previous - 1] == '-' || source[previous - 1] == '=')
-        if (!followsBranchArrow) return false
-
-        val next = skipWhitespace(source, start + "seal".length)
-        val c = source.getOrNull(next) ?: return false
-        return isIdentifierStart(c) || c.isDigit() || c in setOf('.', '"', '\'', '(', '[', '{', '-', '!')
     }
 
     /** Whether a `(`/`[` at [start] begins a callable type ending in `->`. */
@@ -1230,10 +963,14 @@ class AzoraLexerAdapter : LexerBase() {
         /** Literal value keywords: `true`, `false`, `null`. */
         private val LITERAL_KEYWORDS = AzoraLanguageFacts.literalKeywords
 
+        /** The compiler's own primitives: `__int`, `__uint`, `__float`. */
+        private val PRIMITIVE_WORDS = AzoraLanguageFacts.primitiveWords
+
+        /** The keywords the parser also admits as a name - see [classifyWord]. */
+        private val NAME_CAPABLE_KEYWORDS = AzoraLanguageFacts.nameCapableKeywords
+
         /** Doc tags whose first word names a declaration - see [tokenizeDocComment]. */
         private val DOC_NAMING_TAGS = AzoraLanguageFacts.docNamingTags
-
-        private val SOFT_KEYWORDS = AzoraLanguageFacts.softKeywords
 
         private val DECLARATION_NAME_PREFIXES = setOf(
             "func", "pack", "enum", "variant", "error", "spec", "scope",
@@ -1279,12 +1016,17 @@ class AzoraLexerAdapter : LexerBase() {
          * Used by [tokenize] to classify identifier tokens as keywords.
          */
         private val KEYWORD_MAP: Map<String, IElementType> = buildMap {
-            for (kw in DECLARATION_KEYWORDS - SOFT_KEYWORDS) put(kw, AzoraTokenTypes.DECLARATION_KEYWORD)
-            for (kw in CONTROL_KEYWORDS - SOFT_KEYWORDS) put(kw, AzoraTokenTypes.CONTROL_KEYWORD)
-            for (kw in MODIFIER_KEYWORDS - SOFT_KEYWORDS) put(kw, AzoraTokenTypes.MODIFIER_KEYWORD)
-            for (kw in MEMORY_KEYWORDS - SOFT_KEYWORDS) put(kw, AzoraTokenTypes.MEMORY_KEYWORD)
-            for (kw in REACTIVE_KEYWORDS - SOFT_KEYWORDS) put(kw, AzoraTokenTypes.REACTIVE_KEYWORD)
-            for (kw in LITERAL_KEYWORDS - SOFT_KEYWORDS) put(kw, AzoraTokenTypes.KEYWORD)
+            for (kw in DECLARATION_KEYWORDS) put(kw, AzoraTokenTypes.DECLARATION_KEYWORD)
+            for (kw in CONTROL_KEYWORDS) put(kw, AzoraTokenTypes.CONTROL_KEYWORD)
+            for (kw in MODIFIER_KEYWORDS) put(kw, AzoraTokenTypes.MODIFIER_KEYWORD)
+            for (kw in MEMORY_KEYWORDS) put(kw, AzoraTokenTypes.MEMORY_KEYWORD)
+            for (kw in REACTIVE_KEYWORDS) put(kw, AzoraTokenTypes.REACTIVE_KEYWORD)
+            for (kw in LITERAL_KEYWORDS) put(kw, AzoraTokenTypes.KEYWORD)
+            // `__int`, `__uint`, `__float` are words of the language, reserved
+            // by the `__` nothing else may be spelled with. They name what no
+            // declaration can, so they read as keywords and not as the types
+            // written on top of them.
+            for (kw in PRIMITIVE_WORDS) put(kw, AzoraTokenTypes.KEYWORD)
         }
     }
 }

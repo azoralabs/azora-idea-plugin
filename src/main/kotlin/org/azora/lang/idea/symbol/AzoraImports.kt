@@ -84,6 +84,18 @@ object AzoraImports {
 
         /** The path without its last segment; empty for a one-segment path. */
         val container: String get() = path.substringBeforeLast('.', "")
+
+        /**
+         * Whether a `::` reached the last segment - a name *inside* a module.
+         *
+         * `import std.traits::Equal` selects `Equal` out of `std.traits`;
+         * `import std.container.list` walks to the module `list`. Both spell a
+         * dotted [path], and only this tells them apart.
+         */
+        val isSelection: Boolean get() = segments.lastOrNull()?.isSelection == true
+
+        /** The module this leaf reaches into: [path] itself unless it selects. */
+        val module: String get() = if (isSelection) container else path
     }
 
     /**
@@ -165,6 +177,43 @@ object AzoraImports {
     /** Every path any clause brings in, wildcards included as their bare path. */
     fun importedPaths(content: String): Set<String> =
         clauses(content).flatMapTo(linkedSetOf()) { clause -> clause.leaves.map { it.path } }
+
+    /**
+     * The modules a file takes *whole* - every name in them is reachable.
+     *
+     * `import std.io::*` and `import std.container.list` are both this; the
+     * second because a dotted path with no `::` walks the module tree, and a
+     * module named without a selection brings what it declares.
+     *
+     * A `path::Name` clause is deliberately absent: it reaches one name, which
+     * is [selections]' answer and not this one. Keeping the two apart is what
+     * lets an import be narrowed one symbol at a time.
+     */
+    fun wholeModules(content: String): Set<String> =
+        clauses(content).flatMapTo(linkedSetOf()) { clause ->
+            clause.leaves.filterNot { it.isSelection }.map { it.path }
+        }
+
+    /**
+     * The single names each module is reached into for: `std.traits` →
+     * `[PartialEqual, Equal]` for `import std.traits::[PartialEqual, Equal]`.
+     *
+     * A dotted path contributes here too, under the reading that its last
+     * segment is a symbol rather than a module - `import std.math.abs` names
+     * either, and only the module graph knows which, so both are offered and
+     * the caller keeps whichever it can match.
+     */
+    fun selections(content: String): Map<String, Set<String>> {
+        val result = linkedMapOf<String, MutableSet<String>>()
+        for (clause in clauses(content)) {
+            for (leaf in clause.leaves) {
+                if (leaf.isWildcard) continue
+                if (leaf.container.isEmpty()) continue
+                result.getOrPut(leaf.container) { linkedSetOf() }.add(leaf.name)
+            }
+        }
+        return result
+    }
 
     // ── Scanning ────────────────────────────────────────────────────────
 
@@ -294,11 +343,22 @@ object AzoraImports {
             if (cursor.take(',')) continue
             val before = cursor.at
             val mark = segments.size
+            val leafMark = leaves.size
             parseSpec(cursor, prefix, segments, leaves)
             // A group opened by `::` holds names inside the module, so its own
             // head is a selection even though no `::` precedes it directly.
+            // The leaves are marked as well as the flat list: a leaf that does
+            // not know its last segment was selected reads as a module path,
+            // and `std.traits::[Equal]` would name a module `std.traits.Equal`.
             if (selection && segments.size > mark) {
                 segments[mark] = segments[mark].copy(isSelection = true)
+                for (index in leafMark until leaves.size) {
+                    val leaf = leaves[index]
+                    if (prefix.size >= leaf.segments.size) continue
+                    val patched = leaf.segments.toMutableList()
+                    patched[prefix.size] = patched[prefix.size].copy(isSelection = true)
+                    leaves[index] = leaf.copy(segments = patched)
+                }
             }
             // Nothing consumed means the text is not a member after all; give up
             // rather than spin, and let the clause end where it is.
@@ -374,6 +434,6 @@ object AzoraImports {
         }
     }
 
-    private val KEYWORDS = listOf("import", "use")
+    private val KEYWORDS = listOf("import")
     private val MODIFIERS = listOf("export ", "exposed ", "pub ")
 }

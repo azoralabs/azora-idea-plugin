@@ -230,4 +230,39 @@ class AzoraImportsTest {
         val segments = AzoraImports.clauses("import std.io::*").single().segments
         assertTrue(segments.none { it.isSelection }, "the `*` is not a segment")
     }
+
+    // -- what a clause reaches -----------------------------------------------
+
+    @Test
+    fun `a leaf knows whether it selects`() {
+        val selected = AzoraImports.clauses("import std.traits::Equal").single().leaves.single()
+        assertTrue(selected.isSelection)
+        assertEquals("std.traits", selected.module)
+
+        val walked = AzoraImports.clauses("import std.container.list").single().leaves.single()
+        assertTrue(!walked.isSelection)
+        assertEquals("std.container.list", walked.module)
+    }
+
+    @Test
+    fun `every member of a selection group selects`() {
+        val leaves = AzoraImports.clauses("import std.traits::[Equal, Order]").single().leaves
+        assertTrue(leaves.all { it.isSelection }, "leaves: ${leaves.map { it.path to it.isSelection }}")
+        assertEquals(listOf("std.traits", "std.traits"), leaves.map { it.module })
+    }
+
+    @Test
+    fun `only a module taken whole is a whole module`() {
+        assertEquals(setOf("std.io"), AzoraImports.wholeModules("import std.io::*"))
+        assertEquals(setOf("std.container.list"), AzoraImports.wholeModules("import std.container.list"))
+        assertEquals(emptySet<String>(), AzoraImports.wholeModules("import std.traits::[Equal, Order]"))
+    }
+
+    @Test
+    fun `selections are grouped by the module they come from`() {
+        assertEquals(
+            mapOf("std.traits" to setOf("Equal", "Order"), "std.format" to setOf("Display")),
+            AzoraImports.selections("import std.traits::[Equal, Order]\nimport std.format::Display"),
+        )
+    }
 }

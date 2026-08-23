@@ -30,9 +30,9 @@ import org.junit.jupiter.api.Test
  */
 class AzoraAutoImportTest {
 
-    private fun applied(source: String, path: String): String? {
-        val edit = AzoraAutoImport.importEdit(source, path) ?: return null
-        return source.substring(0, edit.offset) + edit.text + source.substring(edit.offset)
+    private fun applied(source: String, module: String, symbol: String? = null): String? {
+        val edit = AzoraAutoImport.importEdit(source, module, symbol) ?: return null
+        return source.substring(0, edit.offset) + edit.text + source.substring(edit.end)
     }
 
     // -- placement -----------------------------------------------------------
@@ -63,14 +63,22 @@ class AzoraAutoImportTest {
 
     @Test
     fun `a file with no imports gets one at the top`() {
-        assertEquals("import std.io\nfunc main() {}", applied("func main() {}", "std.io"))
+        assertEquals("import std.io\n\nfunc main() {}", applied("func main() {}", "std.io"))
     }
 
     @Test
     fun `a module header keeps its place`() {
         assertEquals(
-            "module app.main\n\nimport std.io\nfunc main() {}",
+            "module app.main\n\nimport std.io\n\nfunc main() {}",
             applied("module app.main\n\nfunc main() {}", "std.io"),
+        )
+    }
+
+    @Test
+    fun `a header with nothing under it gets the blank line too`() {
+        assertEquals(
+            "module app.main\n\nimport std.io\n\nfunc main() {}",
+            applied("module app.main\nfunc main() {}", "std.io"),
         )
     }
 
@@ -89,7 +97,76 @@ class AzoraAutoImportTest {
         )
     }
 
+    // -- what the clause says ------------------------------------------------
+
+    @Test
+    fun `a symbol is imported by name, not by its module`() {
+        assertEquals(
+            "module std.char\n\nimport std.traits::PartialEqual\n\npack Char {}",
+            applied("module std.char\n\npack Char {}", "std.traits", "PartialEqual"),
+        )
+    }
+
+    @Test
+    fun `a second symbol joins the clause that is already there`() {
+        assertEquals(
+            "module std.char\n\nimport std.traits::[PartialEqual, Equal]\n\npack Char {}",
+            applied(
+                "module std.char\n\nimport std.traits::PartialEqual\n\npack Char {}",
+                "std.traits",
+                "Equal",
+            ),
+        )
+    }
+
+    @Test
+    fun `a third symbol extends the group`() {
+        assertEquals(
+            "import std.traits::[PartialEqual, Equal, Order]\n",
+            applied("import std.traits::[PartialEqual, Equal]\n", "std.traits", "Order"),
+        )
+    }
+
+    @Test
+    fun `another module gets its own clause`() {
+        assertEquals(
+            "import std.format::Display\nimport std.traits::Equal\n",
+            applied("import std.traits::Equal\n", "std.format", "Display"),
+        )
+    }
+
+    @Test
+    fun `a clause with more written on it is left alone`() {
+        assertEquals(
+            "import std.traits::Order\nimport std.traits::Equal as t\n",
+            applied("import std.traits::Equal as t\n", "std.traits", "Order"),
+        )
+    }
+
     // -- and when to write nothing -------------------------------------------
+
+    @Test
+    fun `a selected symbol is not selected twice`() {
+        assertNull(AzoraAutoImport.importEdit("import std.traits::Equal\n", "std.traits", "Equal"))
+    }
+
+    @Test
+    fun `a name already in the group is not repeated`() {
+        assertNull(
+            AzoraAutoImport.importEdit("import std.traits::[PartialEqual, Equal]\n", "std.traits", "Equal"),
+        )
+    }
+
+    @Test
+    fun `a wildcard already covers the name`() {
+        assertNull(AzoraAutoImport.importEdit("import std.traits::*\n", "std.traits", "Equal"))
+    }
+
+    @Test
+    fun `a module taken whole already covers the name`() {
+        assertNull(AzoraAutoImport.importEdit("import std.traits\n", "std.traits", "Equal"))
+    }
+
 
     @Test
     fun `an import that is already there is not repeated`() {

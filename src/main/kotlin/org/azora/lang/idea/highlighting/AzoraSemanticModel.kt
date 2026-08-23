@@ -508,9 +508,18 @@ object AzoraSemanticModel {
         val fieldHeads = bindingHeads.filter { (head, _) ->
             callableScopes.none { head in it } && fieldBodies.any { head in it }
         }
+        val enumCaseDeclarations = declarationBodies(tokens, "enum").flatMap { caseDeclarations(tokens, it) }.toSet()
+        val errorCaseDeclarations = declarationBodies(tokens, "error").flatMap { caseDeclarations(tokens, it) }.toSet()
+        // `Expr(source: String)` - a payload's slots. They are written where a
+        // parameter would be and reached where a field would be, so they read
+        // as fields; what matters more is that they are read as *declarations*
+        // at all, or the file appears to use a name it never binds.
+        val caseSlots = (enumCaseDeclarations + errorCaseDeclarations)
+            .flatMap { caseSlotDeclarations(tokens, it) }
+            .map { ScopedDeclaration(tokens[it].text, it, 0..tokens.lastIndex) }
         val fields = fieldHeads.map { (_, nameIndex) ->
             ScopedDeclaration(tokens[nameIndex].text, nameIndex, 0..tokens.lastIndex)
-        }
+        } + caseSlots
         val variables = bindingHeads.filterNot { it in fieldHeads }.map { (head, nameIndex) ->
             val enclosing = callableScopes.lastOrNull { head in it }
             val lexical = enclosingBlock(tokens, head)?.let { head..it.last }
@@ -521,9 +530,6 @@ object AzoraSemanticModel {
                 head = head,
             )
         }
-
-        val enumCaseDeclarations = declarationBodies(tokens, "enum").flatMap { caseDeclarations(tokens, it) }.toSet()
-        val errorCaseDeclarations = declarationBodies(tokens, "error").flatMap { caseDeclarations(tokens, it) }.toSet()
 
         return Semantics(
             // The compiler's own types are always in scope: nothing declares
@@ -755,6 +761,17 @@ object AzoraSemanticModel {
         }
     }
 
+    /**
+     * The braced body of each `keyword` declaration - and nothing else.
+     *
+     * The search for the `{` stops where the declaration does. A signature with
+     * no body is the whole point: `prop castValue[self&]: TO` inside a `bridge
+     * spec`, or a `bridge func`, ends at its line, and looking past that found
+     * the *next* declaration's block and called it this one's. Everything in it
+     * then answered to the wrong owner - which is what let a module-wide
+     * `@Supress(.Unused)` miss the enum cases and spec members of `std/core.az`,
+     * each of them reading as a local inside a callable that was not there.
+     */
     private fun declarationBodies(
         tokens: List<AzoraToken>,
         keyword: String,
@@ -763,14 +780,15 @@ object AzoraSemanticModel {
         val ranges = mutableListOf<IntRange>()
         for (i in tokens.indices) {
             if (!AzoraTokenTypes.KEYWORDS.contains(tokens[i].type) || tokens[i].text != keyword) continue
+            val scope = declarationScope(tokens, i)
             var cursor = i + 1
             var sawFor = false
-            while (cursor < tokens.size && tokens[cursor].type != AzoraTokenTypes.L_BRACE) {
+            while (cursor <= scope.last && cursor < tokens.size && tokens[cursor].type != AzoraTokenTypes.L_BRACE) {
                 if (tokens[cursor].text == "for") sawFor = true
                 if (tokens[cursor].type == AzoraTokenTypes.SEMICOLON) break
                 cursor++
             }
-            if (cursor >= tokens.size || tokens[cursor].type != AzoraTokenTypes.L_BRACE) continue
+            if (cursor > scope.last || cursor >= tokens.size || tokens[cursor].type != AzoraTokenTypes.L_BRACE) continue
             if (requireFor && !sawFor) continue
             matchingBrace(tokens, cursor)?.let { close ->
                 if (close > cursor) ranges.add((cursor + 1) until close)
@@ -802,6 +820,28 @@ object AzoraSemanticModel {
                     result.add(index)
                 }
             }
+        }
+        return result
+    }
+
+    /**
+     * The slots the payload of the case at [caseName] declares.
+     *
+     * `Expr(source: String)` declares `source`. Read the way
+     * [parameterDeclarations] reads a signature - a name followed by a `:` -
+     * because a payload list is written exactly like a parameter list. A type
+     * inside one is followed by a `,` or the closing paren, never a `:`, so a
+     * generic argument is never mistaken for a slot.
+     */
+    private fun caseSlotDeclarations(tokens: List<AzoraToken>, caseName: Int): List<Int> {
+        val open = nextMeaningful(tokens, caseName, sameLine = true) ?: return emptyList()
+        if (tokens[open].type != AzoraTokenTypes.L_PAREN) return emptyList()
+        val close = matchingParen(tokens, open, tokens.lastIndex) ?: return emptyList()
+        val result = mutableListOf<Int>()
+        for (i in (open + 1) until close) {
+            if (tokens[i].type != AzoraTokenTypes.IDENTIFIER) continue
+            val next = nextMeaningful(tokens, i, sameLine = false) ?: continue
+            if (next < close && tokens[next].type == AzoraTokenTypes.COLON) result.add(i)
         }
         return result
     }
@@ -1411,7 +1451,13 @@ object AzoraSemanticModel {
         val names = mutableListOf<String>()
         var cursor = start + 1
         while (cursor < tokens.size && tokens[cursor].text != "in" && tokens[cursor].type != AzoraTokenTypes.L_BRACE) {
+            // `for i: Int in 0..mid` - what follows the colon is the type the
+            // row is declared to have. It is named here, not bound here.
+            if (tokens[cursor].type == AzoraTokenTypes.COLON) break
             if (tokens[cursor].type == AzoraTokenTypes.IDENTIFIER) names += tokens[cursor].text
+            cursor++
+        }
+        while (cursor < tokens.size && tokens[cursor].text != "in" && tokens[cursor].type != AzoraTokenTypes.L_BRACE) {
             cursor++
         }
         while (cursor < tokens.size && tokens[cursor].type != AzoraTokenTypes.L_BRACE) {

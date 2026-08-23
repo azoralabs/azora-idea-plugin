@@ -117,7 +117,7 @@ private fun symbolLabel(source: String, symbol: SymbolInfo): String {
         SymbolKind.INFX, SymbolKind.MACRO -> "macro @"
         SymbolKind.BRIDGE -> "bridge ."
         SymbolKind.PACKAGE -> "package"
-        SymbolKind.USE -> if (declaration.startsWith("use ")) "use" else "import"
+        SymbolKind.USE -> "import"
         SymbolKind.PARAM -> "parameter"
         SymbolKind.CTOR -> "ctor"
         SymbolKind.DTOR -> "dtor"

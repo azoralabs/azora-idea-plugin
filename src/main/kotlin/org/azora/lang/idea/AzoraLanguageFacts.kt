@@ -47,7 +47,11 @@ object AzoraLanguageFacts {
     val declarationKeywords = setOf(
         "var", "val", "let", "fin", "func", "pack", "enum", "variant", "impl", "spec", "typealias",
         "prop", "ctor", "dtor", "oper", "annot", "bind", "graph", "scope", "macro", "test",
-        "error", "import", "use",
+        "error", "import", "module", "union",
+        // Reserved, with no grammar of its own yet: `using` has no meaning
+        // outside a macro name, and is a word set aside rather than a word
+        // spent. It reads as a keyword because that is what it is.
+        "using",
     )
 
     /** Reserved words that introduce expressions, control flow, or contracts. */
@@ -55,6 +59,7 @@ object AzoraLanguageFacts {
         "return", "if", "else", "for", "while", "loop", "in", "by", "reverse",
         "break", "continue", "when", "throw", "try", "catch", "rescue", "defer",
         "await", "delay", "as", "is", "with", "without", "assert", "trace", "panic",
+        "where", "derives", "includes", "binds", "requires", "assoc", "seal",
     )
 
     /**
@@ -72,6 +77,7 @@ object AzoraLanguageFacts {
     val modifierKeywords = setOf(
         "exposed", "protected", "confined", "inline", "deepinline", "noinline",
         "threadlocal", "lazy", "factory", "derive", "out", "react", "bridge", "solo",
+        "async", "escaping",
         // `direct spec Number { … }` - the spec's members belong to the type.
         "direct",
         // `scoped Type(args)` in a `graph` - one value per active scope. A word of
@@ -81,7 +87,7 @@ object AzoraLanguageFacts {
 
     /** Reserved words for allocation, ownership, and unsafe operations. */
     val memoryKeywords = setOf(
-        "alloc", "purge", "take", "unsafe", "inject", "preserve",
+        "alloc", "purge", "take", "unsafe", "inject", "preserve", "lend",
     )
 
     /** Reserved words for reactive state and effects. */
@@ -113,20 +119,34 @@ object AzoraLanguageFacts {
      */
     val implicitParameters = setOf(receiverName, "it")
 
+    /**
+     * Every reserved word.
+     *
+     * There are no contextual ones. The compiler's lexer reads a word and
+     * answers with `keywords[text] ?: IDENTIFIER` - `derives` is `derives`
+     * wherever it appears, and a keyword-spelled *name* is admitted by the
+     * parser at the one place it can be (after a `.`, or where a declaration
+     * head can only be followed by a name), never by the lexer changing its
+     * mind. The editor reads the same words the same way.
+     */
     val hardKeywords = declarationKeywords + controlKeywords + modifierKeywords +
         memoryKeywords + reactiveKeywords + literalKeywords
 
     /**
-     * Contextual words from the compiler vocabulary. The lexer colors these
-     * only where the grammar gives them keyword meaning; elsewhere they remain
-     * ordinary identifiers so names such as `Set.union` continue to work.
+     * The keywords the parser also accepts as a *name*.
+     *
+     * `Parser.consumeIdentifierLike` names them one by one, and this is that
+     * list: `cursor.take()` calls a method, `module std.error` ends in a module
+     * segment, `value.union(other)` is a set operation. Every other keyword is
+     * a keyword in every position - there is no shape that turns `derives` or
+     * `where` back into a name, so the editor never pretends otherwise.
      */
-    val softKeywords = setOf(
-        "module", "union", "async", "where", "replace", "escaping",
-        "derives", "includes", "binds", "requires", "assoc", "lend", "seal",
+    val nameCapableKeywords = setOf(
+        "reverse", "prop", "purge", "remember", "retain", "preserve",
+        "alloc", "test", "macro", "take", "union", "async", "error",
     )
 
-    val allCompletionKeywords = (hardKeywords + softKeywords).sorted()
+    val allCompletionKeywords = hardKeywords.sorted()
 
     /**
      * Types the compiler provides itself.
@@ -147,6 +167,19 @@ object AzoraLanguageFacts {
         "Half", "Float", "Double", "Quad",
         "Bool", "Char", "String", "Unit", "Nothing", "Any",
     ) + primitiveWords
+
+    /**
+     * What a real literal is where nothing says which width to read it at.
+     *
+     * A literal carries no width of its own - the suffixes are gone and the
+     * target names the width - so `7.` is this, and `var x: Double = 7.` is a
+     * `Double`. The compiler's own default is the same one; both answer from a
+     * single place so a hint never disagrees with the build.
+     */
+    const val DEFAULT_FLOAT_TYPE = "Float"
+
+    /** What an integer literal is where nothing says which width to read it at. */
+    const val DEFAULT_INT_TYPE = "Int"
 
     /**
      * Compiler-provided (`bridge annot`) annotations. These come from the
