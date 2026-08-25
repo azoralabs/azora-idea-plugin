@@ -26,7 +26,7 @@ import org.junit.jupiter.api.Test
  * `@param` that opens a clause of it, and the name that clause is about.
  *
  * The runs must tile the comment exactly - every character keeps a token, so
- * nothing can fall through a gap and lose its colour. That is what the offset
+ * nothing can fall through a gap and lose its color. That is what the offset
  * assertions here are for, and it is the property most easily broken by adding
  * a case to the splitter.
  */
@@ -90,7 +90,7 @@ class AzoraDocCommentLexTest {
     @Test
     fun `a tag that introduces prose takes no name`() {
         // `@return The buffer.` documents the result, not something called
-        // "The" - colouring the first word would suggest a link that is absent.
+        // "The" - coloring the first word would suggest a link that is absent.
         assertEquals(emptyList<String>(), texts("/** @return The buffer. */", AzoraTokenTypes.DOC_TAG_VALUE))
     }
 

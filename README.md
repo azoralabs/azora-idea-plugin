@@ -28,24 +28,22 @@
   default and is overridable under **Editor | Color Scheme | Azora**. Realm-qualified paths such as `ide::editor`
   are styled as complete paths, not just their first segment.
 - **Macros are discovered, not hardcoded.** A name is a macro because a `macro @name`
-  declaration in your project, the SDK, or a dependency says so. That is what lets a *keyword-named* macro work
-  correctly: `with` remains a keyword while `@with` is a macro in
-  `@query [Position!, Velocity&] @with Render @without Disabled`.
+  declaration in your project, the SDK, or a dependency says so.
+- **Associated types are distinct.** Declarations such as `assoc Item` and every
+  use of that associated type receive the dedicated teal semantic role from AZLS.
 - **Smart casts** are highlighted for the extent of the narrowing (`if x is T`, `guard … is T`, `when` arms).
-- **Inferred-type inlay hints**, off by default, under **Settings | Editor | Inlay Hints | Azora**.
 
 ### Code intelligence
 
-- **Completion** that follows context: real members after `.` and `::`, real module paths in imports, a type's
-  fields inside its constructor call, the macros your project declares, and keywords only once you start a word.
+- **Completion** that follows context: real members after `.` and `::`, project declarations, and keywords only once you start a word.
 - **Live templates** for current declaration forms (`func`, `react func`, `react ctor`, `pack`, `spec`, `annot`, `macro`, `test`, …).
-- **Go-to-declaration** and **quick documentation** resolve symbols by use-site context — locals and parameters before
-  file declarations, members against their receiver's type, and types/callables by their role rather than by spelling.
-  Declarations in the SDK and in path dependencies are navigable.
-- **Diagnostics** underlined on the exact text at fault, with unused-local warnings and quick fixes for naming,
-  constructor/enum shorthand, numeric literals or casts, module/annotation typos, unknown escapes,
-  unterminated strings and stray brackets.
-- **Structure view**, **find usages**, **folding**, **brace matching**, **commenting**, and **indentation**.
+- **Go-to-declaration**, **quick documentation**, semantic tokens, and diagnostics
+  all come from the same versioned AZLS source snapshot.
+- **Compiler-owned diagnostics** are underlined on their exact LSP ranges. Quick
+  fixes are resolved and applied only when their document version still matches.
+- **AZLS runs out of process.** The plugin supervises `~/.azora/azls/azls.jar`,
+  so a language-server failure is isolated from Android Studio.
+- **Structure view**, **folding**, **brace matching**, **commenting**, and **indentation**.
 
 ### Projects and running
 
@@ -64,14 +62,12 @@
 
 ## Release notes
 
-### 0.0.7
+### 0.0.9
 
-- Synchronized all compiler keywords and contextual words, including `assoc`, `derives`, and `without`; `reflect` is correctly treated as a function.
-- Corrected context colors: yellow annotations, orange generics, blue loop labels, ordinary function text, and complete italic realm paths.
-- Rebuilt hover and go-to-declaration around actual symbols and use roles, including lexical shadowing, members, exact offsets, stdlib, and dependencies.
-- Fixed exact-prefix completion (`Anchor` no longer becomes `TilemapAnchor`) and current annotation/macro completion.
-- Added unused-local and clean-code warnings with automatic fixes for naming, shorthand expressions, numeric literals/casts, imports, annotations, strings, and brackets.
-- Added automatic indentation, code-style settings, and Reformat Code for nested comma-free `.azon` objects and arrays; updated Azora indentation, structure view, project templates, run markers, snippets, and live templates to current syntax.
+- Replaced in-plugin semantic analysis with a thin standard-LSP client for AZLS.
+- Added versioned diagnostics, code actions, semantic tokens, completion, hover, and definition requests.
+- Added bounded server restart and editor document lifecycle synchronization.
+- Added the teal `associatedType` semantic role.
 
 ## Installation
 
@@ -84,6 +80,7 @@ cd azora-idea-plugin
 ```
 
 The built plugin zip will be in `build/distributions/`. Install it via **Settings > Plugins > Install Plugin from Disk**.
+Install AZLS first at `~/.azora/azls/azls.jar` (the language repository provides `./gradlew :azls:installAzls`).
 
 ## Getting Started
 

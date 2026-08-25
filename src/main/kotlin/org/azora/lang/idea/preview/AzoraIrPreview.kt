@@ -85,12 +85,12 @@ class AzoraIrPreview(
     }
 
     /**
-     * A read-only editor, coloured as Azora.
+     * A read-only editor, colored as Azora.
      *
      * The IR *is* Azora - `fin value: __Tuple_Int_String_Double = …` is a
      * declaration a reader reads the same way as the one it came from - so it
-     * is shown through the same highlighter rather than as a wall of grey text
-     * beside a coloured file.
+     * is shown through the same highlighter rather than as a wall of gray text
+     * beside a colored file.
      */
     private fun pane(): EditorEx {
         val factory = EditorFactory.getInstance()

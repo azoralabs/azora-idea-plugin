@@ -44,7 +44,7 @@ object AzoraAutoImport {
      * [end] equals [offset] for the common case of writing a new clause, and
      * spans an existing one when a name joins it - `import std.traits::Equal`
      * beside `import std.traits::PartialEqual` would be two clauses about one
-     * module, so the first becomes `import std.traits::[PartialEqual, Equal]`.
+     * module, so the first becomes `import std.traits::{PartialEqual, Equal}`.
      */
     data class Edit(val offset: Int, val text: String, val end: Int = offset)
 
@@ -128,7 +128,7 @@ object AzoraAutoImport {
      * null when there is no such clause.
      *
      * `import std.traits::PartialEqual` + `Equal` becomes
-     * `import std.traits::[PartialEqual, Equal]`, in the order the names were
+     * `import std.traits::{PartialEqual, Equal}`, in the order the names were
      * asked for. A clause that takes the module whole is never touched: it
      * already reaches the name, and narrowing it here would drop the rest.
      */
@@ -144,7 +144,7 @@ object AzoraAutoImport {
                 restOfLineIsBlank(content, candidate.end)
         } ?: return null
         val names = clause.leaves.map { it.name } + symbol
-        val selection = if (names.size == 1) names.first() else "[${names.joinToString(", ")}]"
+        val selection = if (names.size == 1) names.first() else "{${names.joinToString(", ")}}"
         return Edit(clause.start, "import $module::$selection", clause.end)
     }
 

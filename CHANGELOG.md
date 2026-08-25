@@ -1,15 +1,24 @@
 # Changelog
 
+## 0.0.9
+
+- Colored decimal, hexadecimal, and binary integer literals with a balanced pastel-cyan palette in both light and dark themes; real literals keep their existing foreground.
+- Replaced the plugin's local semantic analyzer with a project-scoped AZLS process using standard JSON-RPC/LSP framing.
+- Added versioned document synchronization, precise compiler-owned diagnostics, related locations, and version-checked code actions.
+- Routed completion, hover, definition, and semantic highlighting through AZLS.
+- Added the dedicated teal `associatedType` semantic token for `assoc Item` declarations and uses.
+- Added bounded language-server restart, orderly shutdown, stderr logging, and document close notifications.
+
 ## 0.0.8
 
 ### Two new views
 
-- The IR beside the source. An `.az` file opens as an editor with a preview, the way a Markdown file does, showing what the compiler makes of it in two tabs: **IR** and **Optimized IR**. It refreshes shortly after typing stops, from the buffer as it stands rather than its last save, and shows only *this file's* declarations - a full dump is mostly the standard library the file reached. The compiler is asked rather than imitated, so the pane never disagrees with a build. Both panes are editors coloured as Azora: the IR is Azora, and reads like it.
+- The IR beside the source. An `.az` file opens as an editor with a preview, the way a Markdown file does, showing what the compiler makes of it in two tabs: **IR** and **Optimized IR**. It refreshes shortly after typing stops, from the buffer as it stands rather than its last save, and shows only *this file's* declarations - a full dump is mostly the standard library the file reached. The compiler is asked rather than imitated, so the pane never disagrees with a build. Both panes are editors colored as Azora: the IR is Azora, and reads like it.
 - Doc comments render in place. A `/** … */` is drawn as formatted text and turns back into source the moment the caret enters it (*Editor | General | Appearance | Render documentation comments*). The licence header at the top of a file now folds by default, as it does in every other language.
 
 ### Imports
 
-- One reader for the whole import grammar, so completion, navigation, Optimize Imports and highlighting agree. A group written across several lines, or with a comment in it, is now read correctly; before, everything it selected was uncoloured and unnavigable.
+- One reader for the whole import grammar, so completion, navigation, Optimize Imports and highlighting agree. A group written across several lines, or with a comment in it, is now read correctly; before, everything it selected was uncolored and unnavigable.
 - **Optimize Imports** narrows `import path::*` to what the file actually uses. It never touches an explicit import, and leaves a wildcard alone when the index knows nothing about its module - silently dropping a dependency is the failure nobody notices.
 - Completion offers names that are not imported yet, tagged with the module that declares them, and writes the import in the same keystroke. Alt-Enter does the same for a name already written.
 - An import that is written for you names what it brings in: `import std.traits::PartialEqual`. A second name out of the same module joins the clause that is already there - `import std.traits::[PartialEqual, Equal]` - rather than opening a second clause about one module.
@@ -32,16 +41,16 @@
 
 - Borrowing: writing through a `[self&]` is an error with the exclusive borrow as its fix; a `[self!]` that never writes is a weak warning with the shared one; a receiver nothing reaches is reported; and inside an `impl` the receiver's type is always `Self`, so writing it is reported as saying nothing.
 - Style, each with a fix: `i += 1` becomes `i++`; a run of `purge` statements becomes one `purge [a, b, c]`; a one-line `func`, `prop` or block body moves onto its own line; `[a: Int, b: Int]` becomes `[a, b]: Int`; a repeated initializer `= [0, 0, 0]` becomes `= 0`; a `when` arm holding one statement drops its braces; a constructor that only restates the defaults is reported as redundant; a property that is one expression is offered in its short form.
-- Unused locals, parameters and members are reported (never dimmed - a colour says what a name *is*, and whether anyone calls it is a different question).
+- Unused locals, parameters and members are reported (never dimmed - a color says what a name *is*, and whether anyone calls it is a different question).
 - A declaration with no body - a `spec` member, a `bridge func` - no longer adopts the next declaration's block as its own. Everything in that block answered to the wrong owner, which is what made `@Supress(.Unused)` on a module header miss the enum cases and spec members below it.
 
 ### Colours
 
-- There are no contextual keywords. The compiler's lexer answers `keywords[text] ?: IDENTIFIER` and nothing else, so `derives`, `where`, `assoc`, `requires`, `binds`, `includes`, `module`, `union`, `async`, `escaping`, `lend` and `seal` are keywords wherever they are written - `pack Point derives (Equal, Hash, Display)` is coloured like `pack Point derives [Equal]`, and neither depends on the editor recognising the shape of the header. The one allowance is the parser's own: the thirteen keywords `consumeIdentifierLike` accepts as a name (`take`, `union`, `error`, `test`, `prop`, …) still read as names after a `.` or a declaration head.
+- There are no contextual keywords. The compiler's lexer answers `keywords[text] ?: IDENTIFIER` and nothing else, so `derives`, `where`, `assoc`, `requires`, `binds`, `includes`, `module`, `union`, `async`, `escaping`, `lend` and `seal` are keywords wherever they are written - `pack Point derives (Equal, Hash, Display)` is colored like `pack Point derives [Equal]`, and neither depends on the editor recognising the shape of the header. The one allowance is the parser's own: the thirteen keywords `consumeIdentifierLike` accepts as a name (`take`, `union`, `error`, `test`, `prop`, …) still read as names after a `.` or a declaration head.
 - `__int`, `__uint` and `__float` read as the keywords they are, not as types: no `.az` source declares them, and nothing else may be spelled with their `__`.
 - `prop` names read as any other name - the ordinary foreground, italic and underlined - rather than a brighter white than the fields beside them.
-- Parameters are a light grey-blue; generic type parameters take the macro colour; error cases are redder; a `${…}` macro hole is gold including its braces.
-- A `@Deprecated` declaration is struck through wherever its name appears, over whatever colour it already had.
+- Parameters are a light gray-blue; generic type parameters take the macro color; error cases are redder; a `${…}` macro hole is gold including its braces.
+- A `@Deprecated` declaration is struck through wherever its name appears, over whatever color it already had.
 - Doc comments have their own green, split into prose, `@tag`, and the name a tag documents.
 
 ### Grouping
@@ -50,10 +59,10 @@
 
 ### Fixes
 
-- Doc comments no longer lose their colour while a file is edited: the lexer had reported every token boundary as a safe place to restart, and the editor took it at its word after an edit.
+- Doc comments no longer lose their color while a file is edited: the lexer had reported every token boundary as a safe place to restart, and the editor took it at its word after an edit.
 - Colours update as soon as a declaration in another open tab changes, rather than waiting for a reparse.
-- `derives` keeps its keyword colour after a pack that states which literal it is written as, and when the clause opens its own line.
-- `where` keeps its keyword colour after a signature with a callable parameter - the `>` of `->` was being counted as a closing angle bracket.
+- `derives` keeps its keyword color after a pack that states which literal it is written as, and when the clause opens its own line.
+- `where` keeps its keyword color after a signature with a callable parameter - the `>` of `->` was being counted as a closing angle bracket.
 - A quick fix is no longer built from the text with literals blanked out, which is what once rewrote `text = text + "0"` into `text = + text`.
 - The Kotlin build daemon gets 3 GB, so a full build no longer fails as "Backend Internal error", which reads like a code fault and is not one.
 

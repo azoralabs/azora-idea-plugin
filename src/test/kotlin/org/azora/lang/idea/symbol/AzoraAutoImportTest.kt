@@ -110,7 +110,7 @@ class AzoraAutoImportTest {
     @Test
     fun `a second symbol joins the clause that is already there`() {
         assertEquals(
-            "module std.char\n\nimport std.traits::[PartialEqual, Equal]\n\npack Char {}",
+            "module std.char\n\nimport std.traits::{PartialEqual, Equal}\n\npack Char {}",
             applied(
                 "module std.char\n\nimport std.traits::PartialEqual\n\npack Char {}",
                 "std.traits",
@@ -122,7 +122,7 @@ class AzoraAutoImportTest {
     @Test
     fun `a third symbol extends the group`() {
         assertEquals(
-            "import std.traits::[PartialEqual, Equal, Order]\n",
+            "import std.traits::{PartialEqual, Equal, Order}\n",
             applied("import std.traits::[PartialEqual, Equal]\n", "std.traits", "Order"),
         )
     }

@@ -54,7 +54,7 @@ object AzoraImports {
      *
      * @property isSelection whether a `::` led to it - a name *inside* a module
      *   rather than another step down the module tree. This is what tells a
-     *   module path from the thing selected out of it, and the two are coloured
+     *   module path from the thing selected out of it, and the two are colored
      *   and navigated differently.
      */
     data class Segment(
@@ -399,7 +399,7 @@ object AzoraImports {
          * A group that spans lines is the one place a reader has room to say
          * why a name is there, and `reflection::reflect // why` used to end the
          * clause at the `/`: nothing after it was an import any more, which is
-         * what left the rest of the group uncoloured and unnavigable.
+         * what left the rest of the group uncolored and unnavigable.
          *
          * A `//` comment stops *at* its newline rather than past it, so the
          * caller still decides whether crossing a line is allowed. A block

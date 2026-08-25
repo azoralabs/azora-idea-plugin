@@ -100,8 +100,8 @@ class AzoraLexerAdapter : LexerBase() {
      * Reporting state `0` everywhere told the editor that every token boundary
      * was a safe place to start again. It took that at its word after an edit
      * and relexed from the middle of whatever the caret was in - which is why a
-     * doc comment's lines came back coloured as code, and why the odd keyword
-     * mid-line lost its colour, until something forced a full reparse.
+     * doc comment's lines came back colored as code, and why the odd keyword
+     * mid-line lost its color, until something forced a full reparse.
      */
     override fun getState(): Int = if (getTokenStart() == 0) TOP_OF_FILE else AFTER_CONTEXT
 
@@ -473,7 +473,7 @@ class AzoraLexerAdapter : LexerBase() {
      * A doc comment is one lexical thing but three things to read: the sentence,
      * the `@param` that introduces a clause of it, and the `capacity` that says
      * which parameter the clause is about. Only [DOC_NAMING_TAGS] take a name -
-     * `@return` and `@file` are followed by prose, and colouring its first word
+     * `@return` and `@file` are followed by prose, and coloring its first word
      * differently would only mislead.
      *
      * Everything not recognized stays [AzoraTokenTypes.DOC_COMMENT], so the runs
@@ -800,7 +800,7 @@ class AzoraLexerAdapter : LexerBase() {
      * IDENTIFIER` and nothing else, so an editor that asked *where* a word sits
      * before calling it a keyword was answering a question the language does
      * not ask - and got it wrong wherever its idea of the shape was narrower
-     * than the grammar, which is what left `derives` uncoloured on a pack whose
+     * than the grammar, which is what left `derives` uncolored on a pack whose
      * header it did not recognise.
      *
      * [isNamePosition] stays: it is the same allowance the parser makes with

@@ -154,7 +154,7 @@ class AzoraSemanticModelTest {
 
     @Test
     fun `every form that binds a name is a form that answers for it`() {
-        // What binds without being coloured: a loop's row, a pattern's
+        // What binds without being colored: a loop's row, a pattern's
         // capture, a lambda's parameter, a scope's name. Each is an answer to
         // "does this name resolve?", and a form missing from here is a red
         // underline under working code.
@@ -240,7 +240,7 @@ class AzoraSemanticModelTest {
         val source = "func main() { MissingType(unknownCall()) }"
         // Applying a name to `(` is a call whatever the name turns out to be;
         // that it does not resolve is the annotator's to report, not something
-        // the colour should hide.
+        // the color should hide.
         assertEquals(AzoraSyntaxHighlighter.FUNCTION_CALL, keyFor(source, "unknownCall"))
         // A capitalized one builds a type, and an unknown type is a guess.
         assertNull(keyFor(source, "MissingType"))
@@ -366,8 +366,8 @@ class AzoraSemanticModelTest {
     fun `the receiver shorthand is the same receiver written shorter`() {
         // Inside an `impl` the receiver's type is never in question, so `self`
         // may leave it out. Dropping the type drops nothing about what the name
-        // means, so it must not drop the colour either - a reader scanning an
-        // `impl` sees one receiver colour whichever spelling a member chose.
+        // means, so it must not drop the color either - a reader scanning an
+        // `impl` sees one receiver color whichever spelling a member chose.
         val source = """
             enum Ordering { case Less, Greater }
             impl Ordering {
@@ -413,7 +413,7 @@ class AzoraSemanticModelTest {
         assertEquals(AzoraSyntaxHighlighter.SPEC_TYPE, keyFor(source, "PrettyPrint", occurrence = 1))
         assertEquals(AzoraSyntaxHighlighter.SPEC_PROPERTY, keyFor(source, "pretty", occurrence = 0))
         // Nothing in this file calls `render`, and that changes none of its
-        // colours: a colour says what a name is, and "nobody calls it" is a
+        // colors: a color says what a name is, and "nobody calls it" is a
         // claim about the project that the annotator's warning makes instead.
         assertEquals(AzoraSyntaxHighlighter.SPEC_FUNCTION, keyFor(source, "render", occurrence = 0))
         assertEquals(AzoraSyntaxHighlighter.OVERRIDE_PROPERTY, keyFor(source, "pretty", occurrence = 1))
@@ -421,7 +421,7 @@ class AzoraSemanticModelTest {
     }
 
     @Test
-    fun `a declaration nothing calls keeps the colour of what it is`() {
+    fun `a declaration nothing calls keeps the color of what it is`() {
         val source = """
             @Experimental(since: "0.1")
             spec From<T> {
@@ -534,7 +534,7 @@ class AzoraSemanticModelTest {
     }
 
     @Test
-    fun `an error case wears the failure red rather than the enum colour`() {
+    fun `an error case wears the failure red rather than the enum color`() {
         val source = """
             variant error IndexError {
                 OutOfBounds(index: Int, size: Int)

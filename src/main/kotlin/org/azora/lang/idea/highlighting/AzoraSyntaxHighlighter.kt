@@ -56,7 +56,8 @@ class AzoraSyntaxHighlighter : SyntaxHighlighterBase() {
             AzoraTokenTypes.IDENTIFIER -> IDENTIFIER_KEYS
 
             // Literals
-            AzoraTokenTypes.INT_LITERAL, AzoraTokenTypes.REAL_LITERAL -> NUMBER_KEYS
+            AzoraTokenTypes.INT_LITERAL -> NUMBER_KEYS
+            AzoraTokenTypes.REAL_LITERAL -> REAL_NUMBER_KEYS
             AzoraTokenTypes.STRING_LITERAL, AzoraTokenTypes.RAW_STRING_LITERAL -> STRING_KEYS
             AzoraTokenTypes.CHAR_LITERAL -> STRING_KEYS
             AzoraTokenTypes.STRING_ESCAPE -> STRING_ESCAPE_KEYS
@@ -164,7 +165,7 @@ class AzoraSyntaxHighlighter : SyntaxHighlighterBase() {
             AzoraPalette.italicUnderlined(AzoraPalette.FUNCTION),
         )
 
-        /** Function/constructor parameters - the light grey-blue of a handed-over value. */
+        /** Function/constructor parameters - the light gray-blue of a handed-over value. */
         val PARAMETER = key("AZORA_PARAMETER", AzoraPalette.fg(AzoraPalette.PARAMETER))
 
         /**
@@ -222,7 +223,7 @@ class AzoraSyntaxHighlighter : SyntaxHighlighterBase() {
             AzoraPalette.italicUnderlined(AzoraPalette.PROPERTY),
         )
 
-        // A declaration nothing names has no colour of its own. A colour says
+        // A declaration nothing names has no color of its own. A color says
         // what a name *is* - a `func` is the function blue whether or not this
         // file happens to hold its caller - and the annotator's warning is where
         // "nothing uses this" belongs, because that is a claim about the project
@@ -243,8 +244,11 @@ class AzoraSyntaxHighlighter : SyntaxHighlighterBase() {
 
         // ── Literals ───────────────────────────────────────────────────
 
-        /** Numeric literals. */
-        val NUMBER = key("AZORA_NUMBER", AzoraPalette.fg(AzoraPalette.FOREGROUND))
+        /** Integer literals. */
+        val NUMBER = key("AZORA_NUMBER", AzoraPalette.fg(AzoraPalette.NUMBER))
+
+        /** Floating-point literals use the same pastel cyan numeric palette. */
+        val REAL_NUMBER = key("AZORA_REAL_NUMBER", AzoraPalette.fg(AzoraPalette.NUMBER))
 
         /** String and character literals. */
         val STRING = key("AZORA_STRING", AzoraPalette.fg(AzoraPalette.STRING))
@@ -336,6 +340,7 @@ class AzoraSyntaxHighlighter : SyntaxHighlighterBase() {
         private val TYPE_PARAMETER_KEYS = arrayOf(TYPE_PARAMETER)
         private val IDENTIFIER_KEYS = arrayOf(IDENTIFIER)
         private val NUMBER_KEYS = arrayOf(NUMBER)
+        private val REAL_NUMBER_KEYS = arrayOf(REAL_NUMBER)
         private val STRING_KEYS = arrayOf(STRING)
         private val STRING_ESCAPE_KEYS = arrayOf(STRING_ESCAPE)
         private val INTERPOLATION_KEYS = arrayOf(INTERPOLATION)

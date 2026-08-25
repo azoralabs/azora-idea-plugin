@@ -92,7 +92,8 @@ class AzoraColorSettingsPage : ColorSettingsPage {
             AttributesDescriptor("Macros//Macro hole", AzoraSyntaxHighlighter.MACRO_HOLE),
 
             // Literals
-            AttributesDescriptor("Literals//Number", AzoraSyntaxHighlighter.NUMBER),
+            AttributesDescriptor("Literals//Integer", AzoraSyntaxHighlighter.NUMBER),
+            AttributesDescriptor("Literals//Real number", AzoraSyntaxHighlighter.REAL_NUMBER),
             AttributesDescriptor("Literals//String", AzoraSyntaxHighlighter.STRING),
             AttributesDescriptor("Literals//Escape sequence", AzoraSyntaxHighlighter.STRING_ESCAPE),
             AttributesDescriptor("Literals//String interpolation", AzoraSyntaxHighlighter.INTERPOLATION),

@@ -184,7 +184,7 @@ object AzoraImportRewriter {
     private fun selection(path: String, names: List<String>, separator: String): String? = when {
         names.isEmpty() -> null
         names.size == 1 -> "$path$separator${names.first()}"
-        else -> "$path$separator[${names.joinToString(", ")}]"
+        else -> "$path$separator{${names.joinToString(", ")}}"
     }
 
     /**

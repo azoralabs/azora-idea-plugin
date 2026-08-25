@@ -1,7 +1,7 @@
 <idea-plugin>
     <id>org.azora.lang.idea</id>
     <name>Azora Language</name>
-    <version>0.0.7</version>
+    <version>0.0.9</version>
     <vendor email="support@azora.dev" url="https://azora.dev">AzoraLabs</vendor>
     <description><![CDATA[
         Full language support for the <b>Azora</b> programming language (0.0.5).
@@ -12,11 +12,10 @@
             <li>Context-aware completion: real members after <code>.</code> and <code>::</code>, real module paths in imports, a type's fields in its constructor call</li>
             <li>Live templates for every Azora declaration form</li>
             <li>Go-to-declaration and quick documentation that resolve symbols by scope and use-site context, including local shadowing, members, imports, stdlib, and dependencies</li>
-            <li>Inferred-type inlay hints, toggleable per project</li>
-            <li>Errors and unused-local warnings underlined precisely, with naming, shorthand, numeric, import, annotation, string, and bracket quick fixes</li>
+            <li>Compiler-owned diagnostics, precise source ranges, semantic tokens, completion, hover, navigation, and version-checked quick fixes delivered by the external AZLS process over standard LSP</li>
             <li>Run gutter icons on current <code>func main</code> forms and every <code>test</code></li>
             <li><code>.azon</code> manifest and data support with validation, automatic indentation, code-style settings, and Reformat Code, plus executable, library, and multi-module workspace project templates</li>
-            <li>Brace matching, folding, structure view, find usages, commenting, and Azora/AZON indentation</li>
+            <li>Brace matching, folding, structure view, commenting, and Azora/AZON indentation</li>
         </ul>
     ]]></description>
 
@@ -56,6 +55,11 @@
             language="Azora"
             implementationClass="org.azora.lang.idea.annotator.AzoraExternalAnnotator"/>
 
+        <!-- Non-compiler editor inspections retained during the AZLS move. -->
+        <externalAnnotator
+            language="Azora"
+            implementationClass="org.azora.lang.idea.annotator.AzoraEditorInspectionAnnotator"/>
+
         <!-- Formatting and indentation -->
         <langCodeStyleSettingsProvider
             implementation="org.azora.lang.idea.formatting.AzoraCodeStyleSettingsProvider"/>
@@ -82,12 +86,12 @@
         <gotoDeclarationHandler
             implementation="org.azora.lang.idea.navigation.AzoraGoToDeclarationHandler"/>
 
-        <!-- Optimize Imports: `import path.*` becomes the selection it stands for -->
+        <!-- Editor transformations remain native adapters; symbol/provider
+             decisions used by completion and diagnostics come from AZLS. -->
         <lang.importOptimizer
             language="Azora"
             implementationClass="org.azora.lang.idea.symbol.AzoraImportOptimizer"/>
 
-        <!-- Alt-Enter on a name that exists but is not imported here -->
         <intentionAction>
             <language>Azora</language>
             <className>org.azora.lang.idea.annotator.AzoraImportIntention</className>
@@ -98,7 +102,6 @@
             language="Azora"
             implementationClass="org.azora.lang.idea.documentation.AzoraDocumentationProvider"/>
 
-        <!-- Inlay hints -->
         <codeInsight.declarativeInlayProvider
             language="Azora"
             providerId="azora.inferred.types"
@@ -166,16 +169,16 @@
         <!-- ── Project model ───────────────────────────────────────── -->
 
         <projectService
-            serviceImplementation="org.azora.lang.idea.symbol.AzoraSymbolService"/>
-
-        <projectService
-            serviceImplementation="org.azora.lang.idea.symbol.AzoraMacroIndex"/>
+            serviceImplementation="org.azora.lang.idea.lsp.AzoraLspService"/>
 
         <projectService
             serviceImplementation="org.azora.lang.idea.build.AzoraProjectConfigService"/>
 
         <postStartupActivity
             implementation="org.azora.lang.idea.build.AzoraProjectStartupActivity"/>
+
+        <postStartupActivity
+            implementation="org.azora.lang.idea.lsp.AzoraLspStartupActivity"/>
 
         <editorNotificationProvider
             implementation="org.azora.lang.idea.build.AzoraManifestSyncNotification"/>

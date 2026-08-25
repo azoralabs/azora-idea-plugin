@@ -32,8 +32,8 @@ import java.awt.Font
  * renders correctly under both IDE themes. These are *defaults*: users can
  * override any of them under **Editor | Color Scheme | Azora**.
  *
- * **A syntax colour is a design token, not a judgement.** The dark tone of an
- * entry that colours code is `--color-pastel-*` from
+ * **A syntax color is a design token, not a judgment.** The dark tone of an
+ * entry that colors code is `--color-pastel-*` from
  * `azora-lang-code-website/src/index.css` verbatim; only the light counterparts
  * are computed, by holding the hue and dropping the lightness. Where an editor
  * role has no token of its own — a macro hole, a receiver, a doc comment — the
@@ -77,10 +77,21 @@ object AzoraPalette {
     /** Strings and char literals — pastel green. */
     val STRING = pair(0x3C7C4C, 0x7DBF8A)
 
+    /**
+     * Integer and floating-point literals — pastel cyan.
+     *
+     * Cyan sits halfway between the teal used for types and the blue used for
+     * functions. Both theme tones retain the same 188° hue and 45% saturation;
+     * only lightness changes (36% on a light editor, 59% on a dark editor), so
+     * `1`, `0xFF`, `0b1010`, `3.14`, and `1.5e3` remain calm rather than
+     * turning neon.
+     */
+    val NUMBER = pair(0x327A85, 0x67B9C5)
+
     /** Escape sequences inside literals — brand secondary. */
     val STRING_ESCAPE = pair(0x2A6FC4, 0x4E93EA)
 
-    /** Comments — neutral grey, italic. */
+    /** Comments — neutral gray, italic. */
     val COMMENT = pair(0x8A8A8A, 0x676767)
 
     /**
@@ -89,20 +100,20 @@ object AzoraPalette {
      * A doc comment is prose about the code rather than code, so it sits below
      * the literals it shares a hue with: darker in the light theme, less bright
      * in the dark one. Its tags read at full [STRING] strength, which is what
-     * makes `@param` stand out from the sentence around it.
+     * makes `@param` stand out from the surrounding sentence.
      */
     val DOC = pair(0x2F6138, 0x5E9068)
 
     /** The name a doc tag documents (`capacity` in `@param capacity`) — `--color-az-35`. */
     val DOC_TAG_VALUE = pair(0x777777, 0xC4C4C4)
 
-    /** Ordinary identifiers, numbers, operators and punctuation. */
+    /** Ordinary identifiers, operators and punctuation. */
     val FOREGROUND = pair(0x262626, 0xD9DADA)
 
     /**
      * Functions, declared and called — `--color-pastel-blue`.
      *
-     * The syntax colours come from the pastel family and nowhere else; this one
+     * The syntax colors come from the pastel family and nowhere else; this one
      * was briefly lightened to `#7FBBEF` to sit above [SECONDARY], which put a
      * blue in the editor that the design system does not contain. [LABEL] keeps
      * the brand blue instead, so the two stay apart without inventing a tone.
@@ -121,12 +132,12 @@ object AzoraPalette {
     val PROPERTY = FOREGROUND
 
     /**
-     * Function and constructor parameters — a light grey-blue.
+     * Function and constructor parameters — a light gray-blue.
      *
      * They wore the gold [MACRO_HOLE] wears, which read as a second kind of
      * hole in every signature and left the gold saying two things. A parameter
      * is a value the call site hands over: it sits a step off [FOREGROUND],
-     * cool rather than warm, and takes no colour any other role needs.
+     * cool rather than warm, and takes no color any other role needs.
      */
     val PARAMETER = pair(0x4B5A6A, 0xA9B7C6)
 
@@ -145,7 +156,7 @@ object AzoraPalette {
      * Generic type parameters — `--color-pastel-orange`, bold.
      *
      * The token verbatim, and the same one the playground already spends on
-     * `.cm-azls-generic`, so a `T` is the same colour in the browser and in the
+     * `.cm-azls-generic`, so a `T` is the same color in the browser and in the
      * IDE. It wore the [MACRO] purple for a while on the reasoning that a `T`
      * and a macro are both stand-ins; that made every signature read as though
      * it were half macro, and left the purple saying two things.
@@ -177,10 +188,10 @@ object AzoraPalette {
 
     // ── Diagnostics ────────────────────────────────────────────────────
 
-    /** Error underline colour (`.cm-lintRange-error`). */
+    /** Error underline color (`.cm-lintRange-error`). */
     val ERROR = pair(0xD32F45, 0xFF667A)
 
-    /** Warning underline colour (`.cm-lintRange-warning`). */
+    /** Warning underline color (`.cm-lintRange-warning`). */
     val WARNING = pair(0x9A7A12, 0xE6C96B)
 
     /** Smart-cast background wash — a faint tint of the secondary accent. */
@@ -188,19 +199,19 @@ object AzoraPalette {
 
     // ── Attribute builders ─────────────────────────────────────────────
 
-    /** Plain foreground colour. */
+    /** Plain foreground color. */
     fun fg(color: JBColor): TextAttributes =
         TextAttributes(color, null, null, null, Font.PLAIN)
 
-    /** Bold foreground colour, as the playground styles keywords and macros. */
+    /** Bold foreground color, as the playground styles keywords and macros. */
     fun bold(color: JBColor): TextAttributes =
         TextAttributes(color, null, null, null, Font.BOLD)
 
-    /** Italic foreground colour, as the playground styles comments. */
+    /** Italic foreground color, as the playground styles comments. */
     fun italic(color: JBColor): TextAttributes =
         TextAttributes(color, null, null, null, Font.ITALIC)
 
-    /** Foreground colour with a solid underline. */
+    /** Foreground color with a solid underline. */
     fun underlined(color: JBColor, style: Int = Font.PLAIN): TextAttributes =
         TextAttributes(color, null, color, EffectType.LINE_UNDERSCORE, style)
 
@@ -211,15 +222,15 @@ object AzoraPalette {
     /**
      * A strike through the text, and nothing else.
      *
-     * No foreground: this is layered *over* whatever colour the name already
+     * No foreground: this is layered *over* whatever color the name already
      * has, so a deprecated `func` stays function-blue and reads as struck
-     * through. Giving it a colour of its own would say "deprecated" twice and
+     * through. Giving it a color of its own would say "deprecated" twice and
      * lose what the name is.
      */
     fun struckThrough(): TextAttributes =
         TextAttributes(null, null, null, EffectType.STRIKEOUT, Font.PLAIN)
 
-    /** Foreground colour with a wavy underline, used for diagnostics. */
+    /** Foreground color with a wavy underline, used for diagnostics. */
     fun wavy(color: JBColor): TextAttributes =
         TextAttributes(null, null, color, EffectType.WAVE_UNDERSCORE, Font.PLAIN)
 

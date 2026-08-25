@@ -388,7 +388,7 @@ class AzoraSymbolService(private val project: Project? = null) {
      *
      * Reading bytes returns the last *saved* content, so a declaration typed in
      * another open tab stayed invisible to every feature that consults the
-     * index - colours, completion, navigation - until that tab was saved. An
+     * index - colors, completion, navigation - until that tab was saved. An
      * open document is the file's real content, and is what everything the user
      * can see is about.
      */
@@ -447,7 +447,7 @@ class AzoraSymbolService(private val project: Project? = null) {
      * today, each carrying the module that owns it.
      *
      * [getAllVisibleSymbols] answers "what can this file see", which is the
-     * right question for colouring and resolution and the wrong one for
+     * right question for coloring and resolution and the wrong one for
      * offering an import: the whole point is to reach something not yet
      * visible. Members are flattened, because a module's scope is how the
      * stdlib is written and not what an author imports.
@@ -477,7 +477,7 @@ class AzoraSymbolService(private val project: Project? = null) {
      * Names written in this file that some module declares and no import
      * brings in - each mapped to the module that would make it real.
      *
-     * Visibility for *colouring* is generous: a file may see its whole package,
+     * Visibility for *coloring* is generous: a file may see its whole package,
      * so a name still reads as what it is while the import is being written.
      * Whether the code compiles is a stricter question, and this is it. Only
      * the file's own declarations, its own module, the `exposed` modules and
@@ -615,7 +615,7 @@ class AzoraSymbolService(private val project: Project? = null) {
      *
      * Writing the whole path *is* the reference; an import is the shorthand for
      * not writing it. Resolving only imported modules is what left a fully
-     * qualified name uncoloured and unnavigable while the identical name one
+     * qualified name uncolored and unnavigable while the identical name one
      * line below, reached through an import, worked.
      *
      * Comments and strings are not masked out: the worst a path written in prose
@@ -639,7 +639,7 @@ class AzoraSymbolService(private val project: Project? = null) {
      * This used to read the lines itself, and knew only the `.{ … }` spelling on
      * a single line: a group written across lines, a `[ … ]` one, or any `::` at
      * all imported *nothing*, which is what left everything a modern import
-     * brings in uncoloured and unnavigable.
+     * brings in uncolored and unnavigable.
      */
     internal fun importedModulePaths(source: String): Set<String> {
         val imported = linkedSetOf<String>()
@@ -658,7 +658,7 @@ class AzoraSymbolService(private val project: Project? = null) {
      * The modules a source unit takes *whole*, as opposed to reaching into.
      *
      * [importedModulePaths] answers "which modules did this file mention",
-     * which is the right question for colouring a path and the wrong one for
+     * which is the right question for coloring a path and the wrong one for
      * deciding what compiles: `import std.traits::Equal` mentions `std.traits`
      * and brings in one name out of it. What the rest of the module needs is
      * its own clause, and only [AzoraImports.selections] knows the difference.
@@ -1204,8 +1204,18 @@ class AzoraSymbolService(private val project: Project? = null) {
         return trimmed // no closing > found, return as-is
     }
 
-    /** Type parameter names in the current `Name<...>` declaration spelling. */
+    /** Type parameter names in either accepted declaration position. */
     private fun extractGenericParams(line: String, name: String): List<String> {
+        val core = stripModifiers(line.trimStart())
+        if (core.startsWith("func")) {
+            var leadingStart = "func".length
+            while (leadingStart < core.length && core[leadingStart].isWhitespace()) leadingStart++
+            if (core.getOrNull(leadingStart) == '<') {
+                val leadingEnd = matchingAngle(core, leadingStart) ?: return emptyList()
+                return splitTopLevel(core.substring(leadingStart + 1, leadingEnd), ',')
+                    .mapNotNull(::genericParameterName)
+            }
+        }
         val nameOffset = identifierOffsetInLine(line, name)
         if (nameOffset < 0) return emptyList()
         var start = nameOffset + name.length
@@ -1297,7 +1307,8 @@ class AzoraSymbolService(private val project: Project? = null) {
      */
     private fun isFuncDecl(trimmed: String): Boolean {
         val core = stripModifiers(trimmed)
-        return core.startsWith("func ")
+        val next = core.getOrNull("func".length)
+        return core.startsWith("func") && (next?.isWhitespace() == true || next == '<')
     }
 
     /**
@@ -1310,7 +1321,8 @@ class AzoraSymbolService(private val project: Project? = null) {
      */
     private fun extractFuncNameAndExposed(trimmed: String): Pair<String, Boolean> {
         val exposed = trimmed.startsWith("exposed ")
-        val afterFunc = stripModifiers(trimmed).removePrefix("func ").trimStart()
+        val afterKeyword = stripModifiers(trimmed).removePrefix("func")
+        val afterFunc = skipGenericParams(afterKeyword).trimStart()
         val name = afterFunc.takeWhile { it.isLetterOrDigit() || it == '_' || it == '$' }
         return name to exposed
     }
@@ -1678,7 +1690,7 @@ class AzoraSymbolService(private val project: Project? = null) {
                 // Bare fields are the ordinary immutable pack form and the only
                 // accepted union-member form: `name: Type`.
                 if (!isField && memberTrimmed.contains(":") && !memberTrimmed.startsWith("//") &&
-                    !memberTrimmed.startsWith("func ") && !memberTrimmed.startsWith("prop ") &&
+                    !isFuncDecl(memberTrimmed) && !memberTrimmed.startsWith("prop ") &&
                     !memberTrimmed.startsWith("ctor") && !memberTrimmed.startsWith("dtor") &&
                     !memberTrimmed.startsWith("}")
                 ) {
@@ -1723,7 +1735,7 @@ class AzoraSymbolService(private val project: Project? = null) {
             if (depths.getOrElse(j) { ownerDepth } == ownerDepth + 1) {
                 val memberTrimmed = stripModifiers(l.trimStart())
                 when {
-                    memberTrimmed.startsWith("func ") -> {
+                    isFuncDecl(memberTrimmed) -> {
                         val (name, _) = extractFuncNameAndExposed(memberTrimmed)
                         val header = callableHeader(lines, j)
                         methods.add(
@@ -1798,7 +1810,7 @@ class AzoraSymbolService(private val project: Project? = null) {
             val l = lines[j]
             if (depths.getOrElse(j) { ownerDepth } == ownerDepth + 1) {
                 val memberTrimmed = stripModifiers(l.trimStart())
-                if (memberTrimmed.startsWith("func ")) {
+                if (isFuncDecl(memberTrimmed)) {
                     val name = extractFuncNameAndExposed(memberTrimmed).first
                     val header = callableHeader(lines, j)
                     funcs.add(

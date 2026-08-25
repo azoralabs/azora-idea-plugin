@@ -54,7 +54,7 @@ class AzoraImportRewriterTest {
     fun `a wildcard becomes the names that are used`() {
         val source = "import std.container::*\n\nfunc main() {\n    fin a = list()\n    fin b = map()\n}"
         assertTrue(
-            "import std.container.[list, map]" in narrow(source),
+            "import std.container.{list, map}" in narrow(source),
             "narrowed to:\n${narrow(source)}",
         )
     }
@@ -70,14 +70,14 @@ class AzoraImportRewriterTest {
     fun `child modules narrow to a dotted group`() {
         // `.` walks down the module tree, and `list` is a module under the path.
         val source = "import std.container::*\n\nfunc main() {\n    fin a = list()\n    fin b = map()\n}"
-        assertTrue("import std.container.[list, map]" in narrow(source), narrow(source))
+        assertTrue("import std.container.{list, map}" in narrow(source), narrow(source))
     }
 
     @Test
     fun `declarations narrow to a colons group`() {
         // `::` reaches inside a module, and these are names it declares.
         val source = "import std.io::*\n\nfunc main() {\n    println(1)\n    print(2)\n}"
-        assertTrue("import std.io::[print, println]" in narrow(source), narrow(source))
+        assertTrue("import std.io::{print, println}" in narrow(source), narrow(source))
     }
 
     @Test
@@ -89,7 +89,7 @@ class AzoraImportRewriterTest {
     @Test
     fun `the names are written in a stable order`() {
         val source = "import std.container::*\n\nfunc main() {\n    fin a = set()\n    fin b = list()\n}"
-        assertTrue("import std.container.[list, set]" in narrow(source), narrow(source))
+        assertTrue("import std.container.{list, set}" in narrow(source), narrow(source))
     }
 
     @Test
@@ -109,7 +109,7 @@ class AzoraImportRewriterTest {
     @Test
     fun `indentation is kept`() {
         val source = "    import std.container::*\n\nfunc main() {\n    fin a = list()\n    fin b = map()\n}"
-        assertTrue("    import std.container.[list, map]" in narrow(source), narrow(source))
+        assertTrue("    import std.container.{list, map}" in narrow(source), narrow(source))
     }
 
     // -- what it leaves alone ------------------------------------------------

@@ -121,7 +121,7 @@ class AzoraLexerTest {
         // The editor relexes from the last boundary whose state was the initial
         // one. Every token here is decided by what precedes it, so saying "zero"
         // anywhere else invited a relex from the middle of a doc comment - and
-        // its lines came back coloured as code.
+        // its lines came back colored as code.
         val source = "/** Doc.\n * @param x A number.\n */\nfunc f(x: Int) {}"
         val lexer = AzoraLexerAdapter()
         lexer.start(source, 0, source.length, 0)
@@ -310,7 +310,7 @@ class AzoraLexerTest {
     @Test
     fun `where survives an arrow in the signature above it`() {
         // `(T) -> K` - the `>` of an arrow closes nothing. Counted as an angle
-        // bracket it left `<T, K>` unbalanced, and `where` lost its colour on
+        // bracket it left `<T, K>` unbalanced, and `where` lost its color on
         // every signature carrying a callable parameter.
         val source = "func sortBy<T, K>(arr: Array<T>, key: (T) -> K): Array<T> where K: Order"
 

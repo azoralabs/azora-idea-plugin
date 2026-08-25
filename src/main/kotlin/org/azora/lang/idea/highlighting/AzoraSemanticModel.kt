@@ -310,7 +310,7 @@ object AzoraSemanticModel {
         // function is blue in the import line exactly as at its call site, and a
         // reader can tell what an import brought in without opening the module.
         // A name the index does not know falls through to the ordinary rules,
-        // which is what leaves an unresolved import uncoloured rather than
+        // which is what leaves an unresolved import uncolored rather than
         // dressed up as something it might not be.
         if (index in semantics.importSelectionTokens) {
             declarationStyle(token.text, semantics)?.let { return it }
@@ -379,7 +379,7 @@ object AzoraSemanticModel {
         // Applying a name to `(` is a call - that is the syntax, not a guess
         // about what the name resolves to. An unresolved callee is the
         // annotator's to report; it still reads as the call it is. A capitalized
-        // one is left alone: `MissingType(…)` builds a type, and colouring an
+        // one is left alone: `MissingType(…)` builds a type, and coloring an
         // unknown type would be a guess.
         if (isCall && (token.text in semantics.functions || token.text.firstOrNull()?.isLowerCase() == true)) {
             return AzoraSyntaxHighlighter.FUNCTION_CALL
@@ -641,7 +641,7 @@ object AzoraSemanticModel {
      * The name a decorator declaration declares - `annot @Name`.
      *
      * The `@` is part of the declaration, exactly as it is part of every use
-     * site. It is written and coloured as one thing, and the name after it is
+     * site. It is written and colored as one thing, and the name after it is
      * what the rest of the file will say.
      */
     private fun decoratorNameAfter(tokens: List<AzoraToken>, head: Int): Int? {
@@ -1084,7 +1084,7 @@ object AzoraSemanticModel {
      * `import std.container.[List, map]` is a path (`std.container`) and a
      * selection (`List`, `map`). Only the path is a module chain, so only the
      * path wears the module italic; what is selected is a declaration and keeps
-     * whatever colour that declaration has, exactly as at a use site. The `*` of
+     * whatever color that declaration has, exactly as at a use site. The `*` of
      * `import std.io.*` is punctuation and is never an identifier to begin with.
      *
      * A segment followed by a `.` is always path - something is being looked up
@@ -1142,7 +1142,7 @@ object AzoraSemanticModel {
     /**
      * The `$` that opens each macro hole, as a source offset.
      *
-     * The lexer reads `${` as one token, so the `$` cannot be coloured by
+     * The lexer reads `${` as one token, so the `$` cannot be colored by
      * claiming a token: the annotator narrows the range to this offset and
      * leaves the `{` to read as the punctuation it is.
      */
@@ -1370,7 +1370,7 @@ object AzoraSemanticModel {
      * An unused declaration is *reported*, not recolored: it is still a `func`,
      * a `prop` or a parameter, and dimming it made a file's colors depend on
      * where the caller happened to live. A reader scanning an `impl` reads the
-     * colour to learn what a member *is*; whether anyone calls it is a different
+     * color to learn what a member *is*; whether anyone calls it is a different
      * question and gets a different channel. The annotator turns each of these
      * into a warning with a fix, after checking that nothing outside the file -
      * a test, an implementor, most often - names it either.
@@ -1409,9 +1409,9 @@ object AzoraSemanticModel {
     /**
      * Every name a *form* introduces, read straight off the tokens.
      *
-     * [collectSemantics] knows the declarations it colours; a loop's row, a
+     * [collectSemantics] knows the declarations it colors; a loop's row, a
      * pattern's capture and a lambda's parameter are bound without being
-     * coloured as anything of their own, so they are not in it. They still bind,
+     * colored as anything of their own, so they are not in it. They still bind,
      * and a question of the form "does this name resolve?" has to know that or
      * it reports the loop variable of every `for` in the file.
      *

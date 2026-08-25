@@ -39,7 +39,7 @@ class AzoraSymbolServiceTest {
         // Writing the whole path is the reference; an import is the shorthand
         // for not writing it. `::` also survives the import parser, which reads
         // dotted paths only - `import std.serializer::Serializable` brought in
-        // nothing at all, so the name it selects had no colour and nowhere to
+        // nothing at all, so the name it selects had no color and nowhere to
         // navigate to.
         val source = """
             import std.serializer::Serializable
@@ -62,7 +62,7 @@ class AzoraSymbolServiceTest {
         // The import reader used to be a line scanner that knew one spelling -
         // `path.{a, b}` on a single line. A group written across lines, or with
         // `::` in it, imported nothing at all, so everything it selected was
-        // uncoloured and unnavigable.
+        // uncolored and unnavigable.
         val source = """
             test "queue serialization metadata is declared" {
                 import std.[
