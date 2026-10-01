@@ -273,7 +273,7 @@ object AzoraSemanticModel {
         }
     }
 
-    /** `name: for/while/reverse for/loop` and `break:name`/`continue:name`. */
+    /** `name: for/while/loop` and `break:name`/`continue:name`. */
     private fun isLoopLabel(tokens: List<AzoraToken>, index: Int): Boolean {
         val previous = prevMeaningful(tokens, index, sameLine = true)
         if (previous != null && tokens[previous].type == AzoraTokenTypes.COLON) {
@@ -284,7 +284,7 @@ object AzoraSemanticModel {
         val colon = nextMeaningful(tokens, index, sameLine = true) ?: return false
         if (tokens[colon].type != AzoraTokenTypes.COLON) return false
         val loop = nextMeaningful(tokens, colon, sameLine = true) ?: return false
-        return tokens[loop].text in setOf("for", "while", "loop", "reverse")
+        return tokens[loop].text in setOf("for", "while", "loop")
     }
 
     // ── Identifiers ────────────────────────────────────────────────────

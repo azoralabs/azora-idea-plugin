@@ -584,11 +584,13 @@ class AzoraLexerAdapter : LexerBase() {
             '<' -> when {
                 next == '=' && next2 == '>' -> AzoraTokenTypes.OPERATOR to 3
                 next == '<' && next2 == '=' -> AzoraTokenTypes.OPERATOR to 3
+                next == '>' -> AzoraTokenTypes.OPERATOR to 2
                 next == '<' -> AzoraTokenTypes.OPERATOR to 2
                 next == '=' -> AzoraTokenTypes.OPERATOR to 2
                 else -> AzoraTokenTypes.OPERATOR to 1
             }
             '>' -> when {
+                next == '.' && next2 == '.' -> AzoraTokenTypes.OPERATOR to 3
                 next == '>' && next2 == '=' -> AzoraTokenTypes.OPERATOR to 3
                 next == '>' -> AzoraTokenTypes.OPERATOR to 2
                 next == '=' -> AzoraTokenTypes.OPERATOR to 2
@@ -809,6 +811,13 @@ class AzoraLexerAdapter : LexerBase() {
      * followed by nothing but a name.
      */
     private fun classifyWord(source: String, start: Int, word: String): IElementType {
+        if (word == "then") {
+            var i = start - 1
+            while (i >= 0 && source[i].isWhitespace()) i--
+            val afterDot = i >= 0 && source[i] == '.' && (i == 0 || source[i - 1] != '.')
+            val afterScope = i >= 1 && source[i] == ':' && source[i - 1] == ':'
+            if (afterDot || afterScope) return AzoraTokenTypes.IDENTIFIER
+        }
         if (word in NAME_CAPABLE_KEYWORDS && isNamePosition(source, start, word)) {
             return AzoraTokenTypes.IDENTIFIER
         }

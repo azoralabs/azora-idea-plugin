@@ -56,7 +56,7 @@ object AzoraLanguageFacts {
 
     /** Reserved words that introduce expressions, control flow, or contracts. */
     val controlKeywords = setOf(
-        "return", "if", "else", "for", "while", "loop", "in", "by", "reverse",
+        "return", "if", "else", "for", "while", "loop", "in", "by", "then",
         "break", "continue", "when", "throw", "try", "catch", "rescue", "defer",
         "await", "delay", "as", "is", "with", "without", "assert", "trace", "panic",
         "where", "derives", "includes", "binds", "requires", "assoc", "seal",
@@ -142,7 +142,7 @@ object AzoraLanguageFacts {
      * `where` back into a name, so the editor never pretends otherwise.
      */
     val nameCapableKeywords = setOf(
-        "reverse", "prop", "purge", "remember", "retain", "preserve",
+        "prop", "purge", "remember", "retain", "preserve",
         "alloc", "test", "macro", "take", "union", "async", "error",
     )
 

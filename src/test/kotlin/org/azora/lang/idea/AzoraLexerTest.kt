@@ -28,6 +28,22 @@ import org.junit.jupiter.api.Test
  */
 class AzoraLexerTest {
 
+    @Test
+    fun `descending range is one operator and reverse is an ordinary name`() {
+        val tokens = tokenizeFiltered("reverse>..0")
+        assertEquals(listOf(
+            AzoraTokenTypes.IDENTIFIER to "reverse",
+            AzoraTokenTypes.OPERATOR to ">..",
+            AzoraTokenTypes.INT_LITERAL to "0",
+        ), tokens)
+    }
+
+    @Test
+    fun `then stays a keyword except after member separators`() {
+        assertEquals(AzoraTokenTypes.IDENTIFIER, tokenizeFiltered("a.then()")[2].first)
+        assertEquals(AzoraTokenTypes.CONTROL_KEYWORD, tokenizeFiltered("then").single().first)
+    }
+
     /**
      * Tokenizes [source] and returns a list of (tokenType, tokenText) pairs.
      */
@@ -81,6 +97,7 @@ class AzoraLexerTest {
             "remember" to AzoraTokenTypes.REACTIVE_KEYWORD,
             "react" to AzoraTokenTypes.MODIFIER_KEYWORD,
             "without" to AzoraTokenTypes.CONTROL_KEYWORD,
+            "then" to AzoraTokenTypes.CONTROL_KEYWORD,
         )
         for ((word, type) in expected) {
             assertEquals(type, tokenizeFiltered(word).single().first, "wrong token for $word")
@@ -569,4 +586,12 @@ class AzoraLexerTest {
         assertEquals(AzoraTokenTypes.L_BRACE, tokens[4].first)            // {
         assertEquals(AzoraTokenTypes.R_BRACE, tokens[5].first)            // }
     }
+    @Test
+    fun `exchange and spaceship remain atomic operators`() {
+        val tokens = tokenizeFiltered("a <> b <=> c")
+        assertEquals(listOf("a", "<>", "b", "<=>", "c"), tokens.map { it.second })
+        assertEquals(AzoraTokenTypes.OPERATOR, tokens[1].first)
+        assertEquals(AzoraTokenTypes.OPERATOR, tokens[3].first)
+    }
+
 }

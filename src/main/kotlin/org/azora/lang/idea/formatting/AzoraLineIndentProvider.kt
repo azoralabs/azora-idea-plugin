@@ -66,7 +66,11 @@ class AzoraLineIndentProvider : LineIndentProvider {
     /** True when the line leaves something open that the next line continues. */
     private fun opensBlock(line: String): Boolean {
         if (bracketDelta(line) > 0) return true
-        return CONTINUATION_ENDINGS.any { line.endsWith(it) }
+        return CONTINUATION_ENDINGS.any { ending ->
+            line.endsWith(ending) &&
+                (ending != "then" || line.length == ending.length ||
+                    !line[line.length - ending.length - 1].let { it.isLetterOrDigit() || it == '_' || it == '$' })
+        }
     }
 
     /** True when the text at [caret] begins with a closing bracket. */
@@ -160,6 +164,7 @@ class AzoraLineIndentProvider : LineIndentProvider {
         /** Line endings that mean the statement carries on to the next line. */
         val CONTINUATION_ENDINGS = listOf(
             "->", "=>", "=", "+", "-", "*", "/", "%", "&&", "||", "??", ",", ":",
+            "then",
         )
     }
 }

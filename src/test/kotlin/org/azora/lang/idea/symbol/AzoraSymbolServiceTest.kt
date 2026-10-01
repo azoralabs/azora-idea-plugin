@@ -480,7 +480,7 @@ class AzoraSymbolServiceTest {
         assertTrue(names.contains("combine"), "user-declared 'combine' should be recognized")
         assertTrue(names.contains("to"), "current infix macro should be recognized")
 
-        // `with`, `by` and `reverse` are language keywords. They are operators
+        // `with` and `by` are keywords; `reverse` is an ordinary name. They are operators
         // only where some `macro` declaration makes them one, so nothing may
         // seed them here — that is what lets them stay keyword-colored in a
         // project that does not declare them.

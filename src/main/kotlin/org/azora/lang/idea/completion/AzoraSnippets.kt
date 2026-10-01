@@ -71,7 +71,7 @@ object AzoraSnippets {
         // Control flow
         AzoraSnippet("if", "Conditional", "if condition {\n    \n}"),
         AzoraSnippet("for", "For loop", "for item in items {\n    \n}"),
-        AzoraSnippet("reversefor", "Reverse for loop", "reverse for item in items {\n    \n}"),
+        AzoraSnippet("descendingfor", "Descending range loop", "for i in size>..0 {\n    \n}"),
         AzoraSnippet("labeledfor", "Labeled for loop", "label: for item in items {\n    continue:label\n}"),
         AzoraSnippet("while", "While loop", "while condition {\n    \n}"),
         AzoraSnippet("loop", "Unbounded loop", "loop {\n    \n}"),
