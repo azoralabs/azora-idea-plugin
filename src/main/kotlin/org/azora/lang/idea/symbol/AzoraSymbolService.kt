@@ -2032,7 +2032,7 @@ class AzoraSymbolService(private val project: Project? = null) {
          * type reaching inside itself - `Compare::Less` names no module.
          */
         /** A stacked `@Deprecated` decorator application. */
-        private val DEPRECATED_DECORATOR = Regex("""@Deprecated\b""")
+        private val DEPRECATED_DECORATOR = Regex("""@Deprecated\b|@\([^\n]*\bDeprecated\b""")
 
         private val QUALIFIED_PATH = Regex("""\b([a-z][A-Za-z0-9_]*(?:\.[a-z][A-Za-z0-9_]*)*)::""")
 

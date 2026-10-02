@@ -40,7 +40,7 @@
 ### Diagnostics and quick fixes
 
 - Borrowing: writing through a `[self&]` is an error with the exclusive borrow as its fix; a `[self!]` that never writes is a weak warning with the shared one; a receiver nothing reaches is reported; and inside an `impl` the receiver's type is always `Self`, so writing it is reported as saying nothing.
-- Style, each with a fix: `i += 1` becomes `i++`; a run of `purge` statements becomes one `purge [a, b, c]`; a one-line `func`, `prop` or block body moves onto its own line; `[a: Int, b: Int]` becomes `[a, b]: Int`; a repeated initializer `= [0, 0, 0]` becomes `= 0`; a `when` arm holding one statement drops its braces; a constructor that only restates the defaults is reported as redundant; a property that is one expression is offered in its short form.
+- Style, each with a fix: `i += 1` becomes `i++`; a run of `purge` statements becomes one `purge (a, b, c)`; a one-line `func`, `prop` or block body moves onto its own line; `[a: Int, b: Int]` becomes `[a, b]: Int`; a repeated initializer `= [0, 0, 0]` becomes `= 0`; a `when` arm holding one statement drops its braces; a constructor that only restates the defaults is reported as redundant; a property that is one expression is offered in its short form.
 - Unused locals, parameters and members are reported (never dimmed - a color says what a name *is*, and whether anyone calls it is a different question).
 - A declaration with no body - a `spec` member, a `bridge func` - no longer adopts the next declaration's block as its own. Everything in that block answered to the wrong owner, which is what made `@Supress(.Unused)` on a module header miss the enum cases and spec members below it.
 

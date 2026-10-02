@@ -181,6 +181,12 @@ class AzoraSymbolServiceTest {
         assertTrue(service.getSymbolsForFile("test.az", source).single { it.name == "old" }.isDeprecated)
     }
 
+    @Test
+    fun `parenthesized decorators preserve deprecation`() {
+        val source = "@(Stable, Deprecated)\nfunc old() {}"
+        assertTrue(service.getSymbolsForFile("test.az", source).single { it.name == "old" }.isDeprecated)
+    }
+
     // ── Function declarations ──────────────────────────────────────────
 
     @Test

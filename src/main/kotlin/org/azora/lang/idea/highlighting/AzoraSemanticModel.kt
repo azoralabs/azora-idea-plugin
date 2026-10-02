@@ -218,34 +218,59 @@ object AzoraSemanticModel {
         val result = mutableMapOf<Int, TextAttributesKey>()
         for (at in tokens.indices) {
             if (tokens[at].type != AzoraTokenTypes.DECORATOR || tokens[at].text != "@") continue
-            var name = nextMeaningful(tokens, at, sameLine = true) ?: continue
-            if (!isSigilName(tokens[name])) continue
-            val path = mutableListOf(at, name)
-            var final = name
-            while (true) {
-                val separator = nextMeaningful(tokens, final, sameLine = true) ?: break
-                if (!isOperator(tokens[separator], "::")) break
-                val segment = nextMeaningful(tokens, separator, sameLine = true) ?: break
-                if (!isSigilName(tokens[segment])) break
-                path += separator
-                path += segment
-                final = segment
-            }
-            val finalName = tokens[final].text
-            val style = when {
-                finalName in macros.all -> AzoraSyntaxHighlighter.MACRO
-                finalName in semantics.decorators -> AzoraSyntaxHighlighter.DECORATOR
-                finalName.firstOrNull()?.isUpperCase() == true -> AzoraSyntaxHighlighter.DECORATOR
-                else -> AzoraSyntaxHighlighter.MACRO
-            }
-            path.forEach { result[it] = style }
+            val first = nextMeaningful(tokens, at, sameLine = true) ?: continue
+            val names = if (tokens[first].type == AzoraTokenTypes.L_PAREN) decoratorRowHeads(tokens, first)
+            else listOf(first)
+            for (name in names) {
+                if (!isSigilName(tokens[name])) continue
+                val path = mutableListOf(at, name)
+                var final = name
+                while (true) {
+                    val separator = nextMeaningful(tokens, final, sameLine = true) ?: break
+                    if (!isOperator(tokens[separator], "::")) break
+                    val segment = nextMeaningful(tokens, separator, sameLine = true) ?: break
+                    if (!isSigilName(tokens[segment])) break
+                    path += separator
+                    path += segment
+                    final = segment
+                }
+                val finalName = tokens[final].text
+                val style = when {
+                    finalName in macros.all -> AzoraSyntaxHighlighter.MACRO
+                    finalName in semantics.decorators -> AzoraSyntaxHighlighter.DECORATOR
+                    finalName.firstOrNull()?.isUpperCase() == true -> AzoraSyntaxHighlighter.DECORATOR
+                    else -> AzoraSyntaxHighlighter.MACRO
+                }
+                path.forEach { result[it] = style }
 
-            // Mutable macro spellings (`@vec!`) include the suffix in the
-            // invocation's semantic unit even though `!` remains an operator
-            // token for navigation-friendly lexing.
-            nextMeaningful(tokens, final, sameLine = true)
-                ?.takeIf { isOperator(tokens[it], "!") && finalName in macros.prefix }
-                ?.let { result[it] = style }
+                // Mutable macro spellings (`@vec!`) include the suffix in the
+                // invocation's semantic unit even though `!` remains an operator
+                // token for navigation-friendly lexing.
+                nextMeaningful(tokens, final, sameLine = true)
+                    ?.takeIf { isOperator(tokens[it], "!") && finalName in macros.prefix }
+                    ?.let { result[it] = style }
+            }
+        }
+        return result
+    }
+
+    private fun decoratorRowHeads(tokens: List<AzoraToken>, open: Int): List<Int> {
+        val close = matchingDelimiter(tokens, open, AzoraTokenTypes.L_PAREN, AzoraTokenTypes.R_PAREN)
+            ?: return emptyList()
+        val result = mutableListOf<Int>()
+        var depth = 0
+        var entryStart = true
+        for (index in open + 1 until close) {
+            val token = tokens[index]
+            if (depth == 0 && entryStart && isSigilName(token)) {
+                result += index
+                entryStart = false
+            }
+            when (token.type) {
+                AzoraTokenTypes.L_PAREN, AzoraTokenTypes.L_BRACKET, AzoraTokenTypes.L_BRACE -> depth++
+                AzoraTokenTypes.R_PAREN, AzoraTokenTypes.R_BRACKET, AzoraTokenTypes.R_BRACE -> depth--
+                else -> if (depth == 0 && (token.text == "," || token.text.contains('\n'))) entryStart = true
+            }
         }
         return result
     }
@@ -630,14 +655,20 @@ object AzoraSemanticModel {
         var moduleWide = false
         for (i in tokens.indices) {
             if (tokens[i].type != AzoraTokenTypes.DECORATOR || tokens[i].text != "@") continue
-            val name = nextMeaningful(tokens, i, sameLine = true) ?: continue
+            val first = nextMeaningful(tokens, i, sameLine = true) ?: continue
+            val rowClose = if (tokens[first].type == AzoraTokenTypes.L_PAREN) {
+                matchingDelimiter(tokens, first, AzoraTokenTypes.L_PAREN, AzoraTokenTypes.R_PAREN) ?: continue
+            } else null
+            val name = if (rowClose != null) {
+                decoratorRowHeads(tokens, first).firstOrNull { tokens[it].text == SUPPRESS_DECORATOR } ?: continue
+            } else first
             if (tokens[name].text != SUPPRESS_DECORATOR) continue
             val open = nextMeaningful(tokens, name, sameLine = true) ?: continue
             if (tokens[open].type != AzoraTokenTypes.L_PAREN) continue
             val close = matchingDelimiter(tokens, open, AzoraTokenTypes.L_PAREN, AzoraTokenTypes.R_PAREN) ?: continue
             if ((open..close).none { tokens[it].text == UNUSED_KIND }) continue
 
-            val head = declarationHeadAfter(tokens, close) ?: continue
+            val head = declarationHeadAfter(tokens, rowClose ?: close) ?: continue
             if (tokens[head].text == MODULE_KEYWORD) {
                 moduleWide = true
                 continue
@@ -663,6 +694,12 @@ object AzoraSemanticModel {
             when {
                 token.type == AzoraTokenTypes.DECORATOR && token.text == "@" -> {
                     val name = nextMeaningful(tokens, cursor, sameLine = true) ?: return null
+                    if (tokens[name].type == AzoraTokenTypes.L_PAREN) {
+                        val close = matchingDelimiter(tokens, name, AzoraTokenTypes.L_PAREN, AzoraTokenTypes.R_PAREN)
+                            ?: return null
+                        cursor = nextMeaningful(tokens, close, sameLine = false) ?: return null
+                        continue
+                    }
                     val after = nextMeaningful(tokens, name, sameLine = true) ?: return null
                     cursor = if (tokens[after].type == AzoraTokenTypes.L_PAREN) {
                         val close = matchingDelimiter(tokens, after, AzoraTokenTypes.L_PAREN, AzoraTokenTypes.R_PAREN)

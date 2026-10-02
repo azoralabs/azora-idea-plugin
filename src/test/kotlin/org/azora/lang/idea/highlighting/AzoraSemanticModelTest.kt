@@ -69,6 +69,13 @@ class AzoraSemanticModelTest {
     }
 
     @Test
+    fun `parenthesized decorator rows color each name and skip arguments`() {
+        val source = "@(First, scoped::Second(value: 1)) pack Item"
+        assertEquals(AzoraSyntaxHighlighter.DECORATOR, keyFor(source, "First"))
+        assertEquals(AzoraSyntaxHighlighter.DECORATOR, keyFor(source, "Second"))
+    }
+
+    @Test
     fun `a keyword-named macro is colored only after its sigil`() {
         val macros = AzoraMacros(prefix = setOf("with"))
 
