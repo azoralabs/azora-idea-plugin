@@ -191,8 +191,6 @@ object AzoraSemanticModel {
         val modulePathTokens: Set<Int>,
         /** The names an `import` selects out of a module, as opposed to the path. */
         val importSelectionTokens: Set<Int>,
-        /** The members a `receiver.[…]` target group names. */
-        val memberGroupTokens: Set<Int>,
         /** Everything written inside a `macro` or `meta` declaration's body. */
         val macroBodyTokens: Set<Int>,
         val scopeUsageTokens: Set<Int>,
@@ -314,16 +312,6 @@ object AzoraSemanticModel {
         // dressed up as something it might not be.
         if (index in semantics.importSelectionTokens) {
             declarationStyle(token.text, semantics)?.let { return it }
-        }
-        // `self.[keys[elem], parent[elem]] = …` names members of the receiver.
-        // A parameter of the same name is a different thing entirely, and it is
-        // the group that says which one this is.
-        if (index in semantics.memberGroupTokens) {
-            return if (token.text in semantics.computedProperties) {
-                AzoraSyntaxHighlighter.PROPERTY_CALL
-            } else {
-                AzoraSyntaxHighlighter.FIELD
-            }
         }
         if (index in semantics.scopeUsageTokens) return AzoraSyntaxHighlighter.ZONE_USAGE
         if (index in semantics.decoratorDeclarations) return AzoraSyntaxHighlighter.DECORATOR
@@ -452,11 +440,7 @@ object AzoraSemanticModel {
                 in FUNCTION_DECL_KEYWORDS -> callableNameAfter(tokens, i)?.let { callableHeads.add(i to it) }
                 "ctor", "dtor", "oper" -> anonymousCallableHeads.add(i)
                 "prop" -> declarationNameAfter(tokens, i)?.let { propertyHeads.add(i to it) }
-                // `fin [a, b] = …` binds every name in the group, and each is a
-                // binding of the block the group was written in.
-                in BINDING_KEYWORDS -> groupBindingNames(tokens, i)
-                    ?.forEach { bindingHeads.add(i to it) }
-                    ?: declarationNameAfter(tokens, i)?.let { bindingHeads.add(i to it) }
+                in BINDING_KEYWORDS -> declarationNameAfter(tokens, i)?.let { bindingHeads.add(i to it) }
             }
         }
 
@@ -557,77 +541,10 @@ object AzoraSemanticModel {
             variables = variables,
             modulePathTokens = modulePathTokens(tokens),
             importSelectionTokens = importSelectionTokens(tokens),
-            memberGroupTokens = memberGroupTokens(tokens),
             macroBodyTokens = (declarationBodies(tokens, "macro") + declarationBodies(tokens, "meta"))
                 .flatMapTo(linkedSetOf()) { it },
             scopeUsageTokens = scopeUsageTokens(tokens),
         )
-    }
-
-    /**
-     * The names a grouped binding declares, or null when the head opens none.
-     *
-     * `fin [a, b] = …` and `let [keys: K*, values: V*] = …` bind one name per
-     * entry, and an entry ends at a comma or at the line's end. Only the name
-     * counts: what follows a `:` is the type it states, and an index is an
-     * expression of the scope around the group.
-     */
-    private fun groupBindingNames(tokens: List<AzoraToken>, head: Int): List<Int>? {
-        val open = nextMeaningful(tokens, head, sameLine = false) ?: return null
-        if (tokens[open].type != AzoraTokenTypes.L_BRACKET) return null
-        return entryHeads(tokens, open).takeIf { it.isNotEmpty() }
-    }
-
-    /**
-     * The member names a `receiver.[…]` target group names.
-     *
-     * `self.[keys[elem], parent[elem]] = …` names two members of `self`, and
-     * they are members however the surrounding function spells its parameters:
-     * a `parent` parameter beside a `parent` field does not make the field a
-     * parameter. Only the head of each entry counts - the `elem` indexing it is
-     * an expression of the scope around the group.
-     */
-    private fun memberGroupTokens(tokens: List<AzoraToken>): Set<Int> {
-        val result = linkedSetOf<Int>()
-        for (index in tokens.indices) {
-            if (tokens[index].type != AzoraTokenTypes.L_BRACKET) continue
-            val previous = prevMeaningful(tokens, index, sameLine = true) ?: continue
-            if (tokens[previous].type != AzoraTokenTypes.DOT) continue
-            result += entryHeads(tokens, index)
-        }
-        return result
-    }
-
-    /**
-     * The first identifier of each entry in the bracket group opening at [open].
-     *
-     * Entries end at a comma or at the line's end, and anything nested inside
-     * one - an index, a call's arguments - belongs to that entry rather than
-     * opening a new one.
-     */
-    private fun entryHeads(tokens: List<AzoraToken>, open: Int): List<Int> {
-        val close = matchingDelimiter(tokens, open, AzoraTokenTypes.L_BRACKET, AzoraTokenTypes.R_BRACKET)
-            ?: return emptyList()
-        val names = mutableListOf<Int>()
-        var depth = 0
-        var expectingName = true
-        for (index in (open + 1) until close) {
-            val token = tokens[index]
-            when {
-                token.type == AzoraTokenTypes.L_BRACKET || token.type == AzoraTokenTypes.L_PAREN -> depth++
-                token.type == AzoraTokenTypes.R_BRACKET || token.type == AzoraTokenTypes.R_PAREN -> depth--
-                depth > 0 -> Unit
-                token.type == AzoraTokenTypes.COMMA -> expectingName = true
-                token.type == AzoraTokenTypes.WHITE_SPACE && token.text.contains('\n') -> expectingName = true
-                token.type == AzoraTokenTypes.WHITE_SPACE -> Unit
-                expectingName && token.type == AzoraTokenTypes.IDENTIFIER -> {
-                    names.add(index)
-                    expectingName = false
-                }
-                else -> expectingName = false
-            }
-        }
-        return names
     }
 
     /** Finds the declared name immediately after a current-language declaration head. */

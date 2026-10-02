@@ -479,13 +479,13 @@ class AzoraSemanticModelTest {
     }
 
     @Test
-    fun `a grouped binding binds every name in the group`() {
-        // `fin [a, b] = …` is the lines it stands for, so each name is a
-        // binding of the block it was written in - not an unknown word.
+    fun `explicit bindings retain every declared name`() {
         val source = """
             func rehash[self!]() {
-                fin [oldKeys, oldValues] = with self { [keys, values] }
-                let [newKeys: K*, newValues: V*] = alloc .() * 8
+                fin oldKeys = self.keys
+                fin oldValues = self.values
+                let newKeys: K* = alloc .() * 8
+                let newValues: V* = alloc .() * 8
                 use(oldKeys, oldValues, newKeys, newValues)
             }
         """.trimIndent()
@@ -496,14 +496,15 @@ class AzoraSemanticModelTest {
     }
 
     @Test
-    fun `a grouped target names members, not the parameters beside them`() {
+    fun `explicit targets name members, not the parameters beside them`() {
         // `parent` is both a parameter of this function and a field of the
-        // pack. Inside `self.[…]` it is the field, and the index beside it is
+        // pack. Through `self` it is the field, and the index beside it is
         // the parameter it is written with.
         val source = """
             impl TreeMap<K, V> {
                 func _allocateNode[self!](key: K, value: V, parent: Int): Int {
-                    self.[keys[elem], parent[elem]] = [key, parent]
+                    self.keys[elem] = key
+                    self.parent[elem] = parent
                     return elem
                 }
             }

@@ -46,16 +46,12 @@
 
 ### Colours
 
-- There are no contextual keywords. The compiler's lexer answers `keywords[text] ?: IDENTIFIER` and nothing else, so `derives`, `where`, `assoc`, `requires`, `binds`, `includes`, `module`, `union`, `async`, `escaping`, `lend` and `seal` are keywords wherever they are written - `pack Point derives (Equal, Hash, Display)` is colored like `pack Point derives [Equal]`, and neither depends on the editor recognising the shape of the header. The one allowance is the parser's own: the thirteen keywords `consumeIdentifierLike` accepts as a name (`take`, `union`, `error`, `test`, `prop`, …) still read as names after a `.` or a declaration head.
+- There are no contextual keywords. The compiler's lexer answers `keywords[text] ?: IDENTIFIER` and nothing else, so `derives`, `where`, `assoc`, `requires`, `binds`, `includes`, `module`, `union`, `async`, `escaping`, `lend` and `seal` are keywords wherever they are written - `pack Point derives Equal derives Hash derives Display` colors each clause consistently, and neither depends on the editor recognising the shape of the header. The one allowance is the parser's own: the thirteen keywords `consumeIdentifierLike` accepts as a name (`take`, `union`, `error`, `test`, `prop`, …) still read as names after a `.` or a declaration head.
 - `__int`, `__uint` and `__float` read as the keywords they are, not as types: no `.az` source declares them, and nothing else may be spelled with their `__`.
 - `prop` names read as any other name - the ordinary foreground, italic and underlined - rather than a brighter white than the fields beside them.
 - Parameters are a light gray-blue; generic type parameters take the macro color; error cases are redder; a `${…}` macro hole is gold including its braces.
 - A `@Deprecated` declaration is struck through wherever its name appears, over whatever color it already had.
 - Doc comments have their own green, split into prose, `@tag`, and the name a tag documents.
-
-### Grouping
-
-- `[a, b, c] = [x, y, z]` highlights each name together with the value it answers to.
 
 ### Fixes
 

@@ -112,9 +112,6 @@
             implementationClass="org.azora.lang.idea.hints.AzoraTypeHintProvider"/>
 
         <!-- Editing -->
-        <highlightUsagesHandlerFactory
-            implementation="org.azora.lang.idea.highlighting.AzoraGroupPairHighlighterFactory"/>
-
         <lang.braceMatcher
             language="Azora"
             implementationClass="org.azora.lang.idea.AzoraBraceMatcher"/>

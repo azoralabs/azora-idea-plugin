@@ -175,8 +175,8 @@ class AzoraSymbolServiceTest {
     }
 
     @Test
-    fun `a grouped decorator row deprecates too`() {
-        val source = "@[Stable, Deprecated]\nfunc old() {}"
+    fun `stacked decorators preserve deprecation`() {
+        val source = "@Stable\n@Deprecated\nfunc old() {}"
 
         assertTrue(service.getSymbolsForFile("test.az", source).single { it.name == "old" }.isDeprecated)
     }

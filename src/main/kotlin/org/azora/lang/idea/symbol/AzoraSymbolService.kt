@@ -2031,8 +2031,8 @@ class AzoraSymbolService(private val project: Project? = null) {
          * Module segments are lowercase, which is what tells this apart from a
          * type reaching inside itself - `Compare::Less` names no module.
          */
-        /** `@Deprecated`, alone or inside a grouped `@[…]` row. */
-        private val DEPRECATED_DECORATOR = Regex("""@(?:\[[^\]]*)?\bDeprecated\b""")
+        /** A stacked `@Deprecated` decorator application. */
+        private val DEPRECATED_DECORATOR = Regex("""@Deprecated\b""")
 
         private val QUALIFIED_PATH = Regex("""\b([a-z][A-Za-z0-9_]*(?:\.[a-z][A-Za-z0-9_]*)*)::""")
 
