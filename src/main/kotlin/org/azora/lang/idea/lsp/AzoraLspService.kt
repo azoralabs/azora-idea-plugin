@@ -5,7 +5,12 @@
 
 package org.azora.lang.idea.lsp
 
+import com.google.gson.GsonBuilder
+import com.google.gson.JsonDeserializer
 import com.intellij.codeInsight.daemon.DaemonCodeAnalyzer
+import com.intellij.ide.plugins.PluginManagerCore
+import com.intellij.openapi.extensions.PluginId
+import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.command.WriteCommandAction
@@ -16,7 +21,6 @@ import com.intellij.openapi.editor.event.DocumentEvent
 import com.intellij.openapi.editor.event.DocumentListener
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.openapi.vfs.VirtualFileManager
 import com.intellij.psi.PsiManager
@@ -55,15 +59,16 @@ import org.eclipse.lsp4j.TextDocumentItem
 import org.eclipse.lsp4j.VersionedTextDocumentIdentifier
 import org.eclipse.lsp4j.WorkspaceEdit
 import org.eclipse.lsp4j.WorkspaceFolder
-import org.eclipse.lsp4j.jsonrpc.Launcher
 import org.eclipse.lsp4j.jsonrpc.messages.Either
 import org.eclipse.lsp4j.launch.LSPLauncher
 import org.eclipse.lsp4j.services.LanguageClient
 import org.eclipse.lsp4j.services.LanguageServer
+import org.eclipse.lsp4j.services.TextDocumentService
 import java.io.BufferedReader
 import java.io.File
 import java.io.InputStreamReader
-import java.net.URI
+import java.lang.reflect.ParameterizedType
+import java.util.concurrent.TimeoutException
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
@@ -86,7 +91,6 @@ class AzoraLspService(private val project: Project) : Disposable {
     private val semanticTokens = ConcurrentHashMap<String, TokenSnapshot>()
     @Volatile private var ready = CompletableFuture<LanguageServer>()
     @Volatile private var process: Process? = null
-    @Volatile private var launcher: Launcher<LanguageServer>? = null
     @Volatile private var remote: LanguageServer? = null
 
     init {
@@ -94,8 +98,8 @@ class AzoraLspService(private val project: Project) : Disposable {
             object : DocumentListener {
                 override fun documentChanged(event: DocumentEvent) {
                     val file = FileDocumentManager.getInstance().getFile(event.document) ?: return
-                    if (!isAzora(file) || !belongsToProject(file)) return
-                    changed(file, event.document)
+                    if (!isAzora(file) || !opened.containsKey(uri(file))) return
+                    ensureOpen(file, event.document)
                 }
             },
             this,
@@ -105,8 +109,8 @@ class AzoraLspService(private val project: Project) : Disposable {
 
     fun snapshot(file: VirtualFile, document: Document): LspSnapshot {
         ensureOpen(file, document)
-        val uri = file.url
-        val version = opened[uri]?.version?.get()
+        val uri = uri(file)
+        val version = opened[uri]?.version
         val published = diagnostics[uri]?.takeIf { it.version == null || it.version == version }
         return LspSnapshot(
             diagnostics = published?.diagnostics.orEmpty(),
@@ -115,46 +119,54 @@ class AzoraLspService(private val project: Project) : Disposable {
         )
     }
 
-    fun tokens(file: VirtualFile, document: Document): List<LspSemanticToken> {
+    fun tokensAtLine(file: VirtualFile, document: Document, line: Int): List<LspSemanticToken> {
         ensureOpen(file, document)
-        val version = opened[file.url]?.version?.get()
-        return semanticTokens[file.url]?.takeIf { it.version == version }?.tokens.orEmpty()
+        val version = opened[uri(file)]?.version
+        return semanticTokens[uri(file)]?.takeIf { it.version == version }?.byLine?.get(line).orEmpty()
     }
 
     fun complete(file: VirtualFile, document: Document, offset: Int): List<CompletionItem> {
-        val server = serverWithin(REQUEST_TIMEOUT_MS) ?: return emptyList()
-        ensureOpen(file, document)
-        val result = runCatching {
+        val result = request(file, document) { server, uri ->
             server.textDocumentService.completion(
-                CompletionParams(TextDocumentIdentifier(file.url), position(document, offset)),
-            ).get(REQUEST_TIMEOUT_MS, TimeUnit.MILLISECONDS)
-        }.getOrNull() ?: return emptyList()
-        return if (result.isLeft) result.left else result.right.items
+                CompletionParams(TextDocumentIdentifier(uri), position(document, offset)),
+            )
+        } ?: return emptyList()
+        return if (result.isLeft) result.left.orEmpty() else result.right.items.orEmpty()
     }
 
-    fun hover(file: VirtualFile, document: Document, offset: Int): Hover? {
-        val server = serverWithin(REQUEST_TIMEOUT_MS) ?: return null
-        ensureOpen(file, document)
-        return runCatching {
-            server.textDocumentService.hover(
-                HoverParams(TextDocumentIdentifier(file.url), position(document, offset)),
-            ).get(REQUEST_TIMEOUT_MS, TimeUnit.MILLISECONDS)
-        }.getOrNull()
-    }
+    fun hover(file: VirtualFile, document: Document, offset: Int): Hover? =
+        request(file, document) { server, uri ->
+            server.textDocumentService.hover(HoverParams(TextDocumentIdentifier(uri), position(document, offset)))
+        }
 
     fun definition(file: VirtualFile, document: Document, offset: Int): List<LspLocation> {
-        val server = serverWithin(REQUEST_TIMEOUT_MS) ?: return emptyList()
-        ensureOpen(file, document)
-        val result = runCatching {
+        val result = request(file, document) { server, uri ->
             server.textDocumentService.definition(
-                DefinitionParams(TextDocumentIdentifier(file.url), position(document, offset)),
-            ).get(REQUEST_TIMEOUT_MS, TimeUnit.MILLISECONDS)
-        }.getOrNull() ?: return emptyList()
+                DefinitionParams(TextDocumentIdentifier(uri), position(document, offset)),
+            )
+        } ?: return emptyList()
         return if (result.isLeft) {
             result.left.map { LspLocation(it.uri, it.range) }
         } else {
             result.right.map { LspLocation(it.targetUri, it.targetSelectionRange ?: it.targetRange) }
         }
+    }
+
+    private fun <T> request(
+        file: VirtualFile,
+        document: Document,
+        send: (LanguageServer, String) -> CompletableFuture<T>,
+    ): T? {
+        if (!isAzora(file)) return null
+        val server = serverWithin(REQUEST_TIMEOUT_MS) ?: return null
+        val stamp = document.modificationStamp
+        val response = synchronized(opened) {
+            if (remote !== server) return null
+            val uri = uri(file)
+            synchronizeDocument(server, uri, document)
+            send(server, uri)
+        }
+        return await(response, REQUEST_TIMEOUT_MS)?.takeIf { document.modificationStamp == stamp }
     }
 
     fun apply(action: CodeAction) {
@@ -167,22 +179,23 @@ class AzoraLspService(private val project: Project) : Disposable {
         resolved.edit?.let(::applyWorkspaceEdit)
     }
 
-    fun close(file: VirtualFile) {
-        val state = opened.remove(file.url) ?: return
-        diagnostics.remove(file.url)
-        actions.remove(file.url)
-        semanticTokens.remove(file.url)
+    fun close(file: VirtualFile) = synchronized(opened) {
+        val state = opened.remove(uri(file)) ?: return@synchronized
+        diagnostics.remove(state.uri)
+        actions.remove(state.uri)
+        semanticTokens.remove(state.uri)
         remote?.textDocumentService?.didClose(
             DidCloseTextDocumentParams(TextDocumentIdentifier(state.uri)),
         )
+        Unit
     }
 
     private fun start() {
         if (disposed.get() || remote != null) return
-        val connectionReady = CompletableFuture<LanguageServer>()
-        ready = connectionReady
+        val connectionReady = ready
         val jar = locateServer() ?: run {
-            log.warn("AZLS was not found. Build/install it at ~/.azora/azls/azls.jar")
+            connectionReady.completeExceptionally(IllegalStateException("AZLS is missing from the plugin"))
+            log.warn("AZLS is missing from the plugin")
             return
         }
         try {
@@ -193,13 +206,16 @@ class AzoraLspService(private val project: Project) : Disposable {
                 .start()
             process = started
             drainStderr(started)
-            val client = Client()
-            val created = LSPLauncher.createClientLauncher(client, started.inputStream, started.outputStream)
-            launcher = created
+            val created = LSPLauncher.Builder<LanguageServer>()
+                .setLocalService(Client())
+                .setRemoteInterface(LanguageServer::class.java)
+                .setInput(started.inputStream)
+                .setOutput(started.outputStream)
+                .configureGson { AzoraLspCodec.configure(it) }
+                .create()
             val server = created.remoteProxy
-            remote = server
             val listening = created.startListening()
-            val rootUri = project.basePath?.let { File(it).toURI().toString() }
+            val rootUri = project.basePath?.let { File(it).toPath().toUri().toString() }
             val params = InitializeParams().apply {
                 processId = ProcessHandle.current().pid().toInt()
                 clientInfo = ClientInfo("Azora IntelliJ Plugin", PLUGIN_PROTOCOL_VERSION)
@@ -209,14 +225,24 @@ class AzoraLspService(private val project: Project) : Disposable {
                         positionEncodings = listOf("utf-16")
                     }
                 }
-                workspaceFolders = rootUri?.let { listOf(WorkspaceFolder(it, project.name)) }
+                workspaceFolders = buildList {
+                    rootUri?.let { add(WorkspaceFolder(it, project.name)) }
+                    jar.parentFile.resolve("std").takeIf(File::isDirectory)?.let {
+                        add(WorkspaceFolder(it.toPath().toUri().toString(), "Azora standard library"))
+                    }
+                }
             }
             server.initialize(params).thenAccept {
                 if (disposed.get()) return@thenAccept
                 server.initialized(InitializedParams())
-                connectionReady.complete(server)
+                synchronized(opened) {
+                    if (disposed.get() || ready !== connectionReady) return@thenAccept
+                    remote = server
+                    connectionReady.complete(server)
+                }
             }.exceptionally { error ->
                 failStartup(error, connectionReady)
+                started.destroy()
                 null
             }
             ApplicationManager.getApplication().executeOnPooledThread {
@@ -225,8 +251,12 @@ class AzoraLspService(private val project: Project) : Disposable {
                 } catch (error: Throwable) {
                     if (!disposed.get()) log.warn("AZLS connection stopped", error)
                 } finally {
-                    remote = null
-                    opened.clear()
+                    synchronized(opened) {
+                        remote = null
+                        opened.clear()
+                        connectionReady.completeExceptionally(IllegalStateException("AZLS connection closed"))
+                        ready = CompletableFuture()
+                    }
                     if (!disposed.get() && restarts.incrementAndGet() <= MAX_RESTARTS) {
                         AppExecutorUtil.getAppScheduledExecutorService().schedule(::start, 1, TimeUnit.SECONDS)
                     }
@@ -243,57 +273,57 @@ class AzoraLspService(private val project: Project) : Disposable {
     }
 
     private fun ensureOpen(file: VirtualFile, document: Document) {
-        if (!isAzora(file)) return
-        val uri = file.url
-        val connection = ready
-        connection.thenAccept { server ->
-            if (disposed.get()) return@thenAccept
-            val created = OpenDocument(uri, document, AtomicInteger(1))
-            if (opened.putIfAbsent(uri, created) == null) {
-                diagnostics.remove(uri)
-                actions.remove(uri)
-                semanticTokens.remove(uri)
-                server.textDocumentService.didOpen(
-                    DidOpenTextDocumentParams(TextDocumentItem(uri, "azora", 1, document.text)),
-                )
-                requestSemanticTokens(created)
-            }
+        if (!isAzora(file) || disposed.get()) return
+        synchronized(opened) {
+            remote?.let { synchronizeDocument(it, uri(file), document) }
         }
     }
 
-    private fun changed(file: VirtualFile, document: Document) {
-        ensureOpen(file, document)
-        val connection = ready
-        connection.thenAccept { server ->
-            val state = opened[file.url] ?: return@thenAccept
-            val version = state.version.incrementAndGet()
-            diagnostics.remove(file.url)
-            actions.remove(file.url)
-            semanticTokens.remove(file.url)
+    /** Called under the same lock as request dispatch so didOpen/didChange arrive first. */
+    private fun synchronizeDocument(server: LanguageServer, uri: String, document: Document) {
+        val stamp = document.modificationStamp
+        val current = opened[uri]
+        if (current?.stamp == stamp && current.document === document) return
+
+        val version = (current?.version ?: 0) + 1
+        val state = OpenDocument(uri, document, version, stamp)
+        opened[uri] = state
+        diagnostics.remove(uri)
+        actions.remove(uri)
+        semanticTokens.remove(uri)
+        if (current == null) {
+            server.textDocumentService.didOpen(
+                DidOpenTextDocumentParams(TextDocumentItem(uri, "azora", version, document.text)),
+            )
+        } else {
             server.textDocumentService.didChange(
                 DidChangeTextDocumentParams(
-                    VersionedTextDocumentIdentifier(file.url, version),
+                    VersionedTextDocumentIdentifier(uri, version),
                     listOf(TextDocumentContentChangeEvent(document.text)),
                 ),
             )
-            requestSemanticTokens(state)
         }
+        AppExecutorUtil.getAppScheduledExecutorService().schedule({
+            if (opened[uri] === state) requestSemanticTokens(state)
+        }, 120, TimeUnit.MILLISECONDS)
     }
 
     private fun requestSemanticTokens(state: OpenDocument) {
-        val version = state.version.get()
         remote?.textDocumentService?.semanticTokensFull(
             SemanticTokensParams(TextDocumentIdentifier(state.uri)),
         )?.thenAccept { response ->
-            if (opened[state.uri]?.version?.get() != version) return@thenAccept
-            semanticTokens[state.uri] = TokenSnapshot(version, AzoraLspCodec.decodeSemanticTokens(response?.data.orEmpty()))
+            if (opened[state.uri] !== state) return@thenAccept
+            semanticTokens[state.uri] = TokenSnapshot(
+                state.version,
+                AzoraLspCodec.decodeSemanticTokens(response?.data.orEmpty()).groupBy(LspSemanticToken::line),
+            )
             restartDaemon(state.uri)
         }
     }
 
     private fun requestCodeActions(params: PublishDiagnosticsParams) {
         val server = remote ?: return
-        val expectedVersion = opened[params.uri]?.version?.get() ?: return
+        val expectedVersion = opened[params.uri]?.version ?: return
         if (params.version != null && params.version != expectedVersion) return
         val range = params.diagnostics.fold(null as Range?) { combined, diagnostic ->
             if (combined == null) diagnostic.range else Range(
@@ -308,7 +338,7 @@ class AzoraLspService(private val project: Project) : Disposable {
                 CodeActionContext(params.diagnostics),
             ),
         ).thenAccept { returned ->
-            if (opened[params.uri]?.version?.get() != expectedVersion) return@thenAccept
+            if (opened[params.uri]?.version != expectedVersion) return@thenAccept
             actions[params.uri] = ActionSnapshot(
                 expectedVersion,
                 returned.orEmpty().mapNotNull { if (it.isRight) it.right else null },
@@ -326,13 +356,13 @@ class AzoraLspService(private val project: Project) : Disposable {
                 val documentEdit = change.left
                 val uri = documentEdit.textDocument.uri
                 val expected = documentEdit.textDocument.version
-                val current = opened[uri]?.version?.get()
+                val current = opened[uri]?.version
                 if (expected != null && current != expected) return@invokeLater
                 changes.getOrPut(uri) { mutableListOf() }.addAll(documentEdit.edits)
             }
             WriteCommandAction.runWriteCommandAction(project, "Apply Azora fix", null, Runnable {
                 changes.forEach { (uri, edits) ->
-                    val file = VirtualFileManager.getInstance().findFileByUrl(uri) ?: return@forEach
+                    val file = AzoraLspCodec.findFile(uri) ?: return@forEach
                     val document = FileDocumentManager.getInstance().getDocument(file) ?: return@forEach
                     edits.sortedByDescending { offset(document, it.range.start) }.forEach { textEdit ->
                         val start = offset(document, textEdit.range.start)
@@ -346,9 +376,31 @@ class AzoraLspService(private val project: Project) : Disposable {
         }
     }
 
-    private fun serverWithin(timeoutMs: Long): LanguageServer? = remote ?: runCatching {
-        ready.get(timeoutMs, TimeUnit.MILLISECONDS)
-    }.getOrNull()
+    private fun serverWithin(timeoutMs: Long): LanguageServer? =
+        remote ?: await(ready, timeoutMs, cancelOnTimeout = false)
+
+    private fun <T> await(future: CompletableFuture<T>, timeoutMs: Long, cancelOnTimeout: Boolean = true): T? {
+        val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs)
+        try {
+            while (true) {
+                ProgressManager.checkCanceled()
+                val remaining = deadline - System.nanoTime()
+                if (remaining <= 0) return null
+                try {
+                    return future.get(minOf(remaining, TimeUnit.MILLISECONDS.toNanos(25)), TimeUnit.NANOSECONDS)
+                } catch (_: TimeoutException) {
+                    // Give the IntelliJ progress indicator a chance to cancel stale requests.
+                }
+            }
+        } catch (_: java.util.concurrent.ExecutionException) {
+            return null
+        } catch (_: InterruptedException) {
+            Thread.currentThread().interrupt()
+            return null
+        } finally {
+            if (cancelOnTimeout && !future.isDone) future.cancel(true)
+        }
+    }
 
     private fun position(document: Document, offset: Int): Position {
         val safe = offset.coerceIn(0, document.textLength)
@@ -366,7 +418,7 @@ class AzoraLspService(private val project: Project) : Disposable {
     private fun restartDaemon(uri: String) {
         ApplicationManager.getApplication().invokeLater {
             if (project.isDisposed) return@invokeLater
-            val file = VirtualFileManager.getInstance().findFileByUrl(uri) ?: return@invokeLater
+            val file = AzoraLspCodec.findFile(uri) ?: return@invokeLater
             val psi = PsiManager.getInstance(project).findFile(file) ?: return@invokeLater
             DaemonCodeAnalyzer.getInstance(project).restart(psi)
         }
@@ -383,14 +435,13 @@ class AzoraLspService(private val project: Project) : Disposable {
     private fun locateServer(): File? = sequenceOf(
         System.getProperty("azora.azls.jar"),
         System.getenv("AZORA_AZLS_JAR"),
+        PluginManagerCore.getPlugin(PluginId.getId("org.azora.lang.idea"))
+            ?.pluginPath?.resolve("azls/azls-all.jar")?.toString(),
         File(System.getProperty("user.home"), ".azora/azls/azls.jar").path,
-        project.basePath?.let { File(it).resolve("azls.jar").path },
     ).filterNotNull().map(::File).firstOrNull(File::isFile)
 
-    private fun belongsToProject(file: VirtualFile): Boolean {
-        val base = project.basePath ?: return true
-        return file.path == base || file.path.startsWith("$base/")
-    }
+    private fun uri(file: VirtualFile): String =
+        if (file.fileSystem.protocol == "file") file.toNioPath().toUri().toString() else file.url
 
     private fun isAzora(file: VirtualFile): Boolean = file.extension.equals("az", ignoreCase = true)
 
@@ -409,7 +460,7 @@ class AzoraLspService(private val project: Project) : Disposable {
         override fun telemetryEvent(`object`: Any?) = Unit
 
         override fun publishDiagnostics(params: PublishDiagnosticsParams) {
-            val current = opened[params.uri]?.version?.get()
+            val current = opened[params.uri]?.version ?: return
             if (params.version != null && current != params.version) return
             diagnostics[params.uri] = PublishedSnapshot(params.version, params.diagnostics.orEmpty())
             actions.remove(params.uri)
@@ -434,10 +485,10 @@ class AzoraLspService(private val project: Project) : Disposable {
         }
     }
 
-    private data class OpenDocument(val uri: String, val document: Document, val version: AtomicInteger)
+    private data class OpenDocument(val uri: String, val document: Document, val version: Int, val stamp: Long)
     private data class PublishedSnapshot(val version: Int?, val diagnostics: List<Diagnostic>)
     private data class ActionSnapshot(val version: Int, val actions: List<CodeAction>)
-    private data class TokenSnapshot(val version: Int, val tokens: List<LspSemanticToken>)
+    private data class TokenSnapshot(val version: Int, val byLine: Map<Int, List<LspSemanticToken>>)
 
     companion object {
         private const val REQUEST_TIMEOUT_MS = 900L
@@ -459,6 +510,37 @@ data class LspLocation(val uri: String, val range: Range)
 
 /** Pure LSP delta decoding kept separate from editor state for regression tests. */
 internal object AzoraLspCodec {
+    fun configure(gson: GsonBuilder) {
+        // LSP allows a singleton Location as well as Location[] or LocationLink[].
+        // The LSP4J 0.21 proxy only declares the array forms.
+        val resultType = (TextDocumentService::class.java
+            .getMethod("definition", DefinitionParams::class.java).genericReturnType as ParameterizedType)
+            .actualTypeArguments.single()
+        gson.registerTypeAdapter(resultType, JsonDeserializer<Either<List<Location>, List<LocationLink>>> { json, _, context ->
+            when {
+                json.isJsonObject -> Either.forLeft(listOf(context.deserialize(json, Location::class.java)))
+                json.isJsonArray && json.asJsonArray.firstOrNull()?.asJsonObject?.has("targetUri") == true ->
+                    Either.forRight(context.deserialize<Array<LocationLink>>(json, Array<LocationLink>::class.java).toList())
+                json.isJsonArray ->
+                    Either.forLeft(context.deserialize<Array<Location>>(json, Array<Location>::class.java).toList())
+                else -> Either.forLeft(emptyList())
+            }
+        })
+    }
+
+    fun findFile(uri: String): VirtualFile? {
+        VirtualFileManager.getInstance().findFileByUrl(uri)?.let { return it }
+        val path = runCatching { java.nio.file.Path.of(java.net.URI(uri)) }.getOrNull() ?: return null
+        return com.intellij.openapi.vfs.LocalFileSystem.getInstance().findFileByNioFile(path)
+    }
+
+    fun offset(document: Document, position: Position): Int? {
+        if (position.line !in 0 until document.lineCount || position.character < 0) return null
+        val start = document.getLineStartOffset(position.line)
+        val length = document.getLineEndOffset(position.line) - start
+        return (start + position.character).takeIf { position.character <= length }
+    }
+
     private val tokenTypes = listOf(
         "keyword", "string", "number", "comment", "function", "type", "parameter", "variable",
         "decorator", "macro", "associatedType", "generic", "contextParameter", "property", "enumMember",

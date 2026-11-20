@@ -240,7 +240,7 @@ class AzoraLexerTest {
         assertEquals(AzoraTokenTypes.IDENTIFIER, dropped.first)
 
         val reserved = tokenizeFiltered("macro ${'$'}a @using ${'$'}b => a").first { it.second == "using" }
-        assertEquals(AzoraTokenTypes.DECLARATION_KEYWORD, reserved.first)
+        assertEquals(AzoraTokenTypes.CONTROL_KEYWORD, reserved.first)
 
         val setterName = tokenizeFiltered("func set(value: Int) {}").first { it.second == "set" }
         assertEquals(AzoraTokenTypes.IDENTIFIER, setterName.first)
@@ -384,18 +384,36 @@ class AzoraLexerTest {
 
     @Test
     fun `real literals are tokenized`() {
-        val tokens = tokenizeFiltered("3.14 1e-5 2.0f 3.0D")
+        val tokens = tokenizeFiltered("3.14 1e-5 2. 3.0")
         assertEquals(4, tokens.size)
         assertTrue(tokens.all { it.first == AzoraTokenTypes.REAL_LITERAL })
     }
 
     @Test
-    fun `type-suffixed integers are tokenized`() {
-        val spellings = listOf("42b", "200ub", "42s", "60000us", "42u", "42L", "42uL", "42c", "42uc")
-        val tokens = tokenizeFiltered(spellings.joinToString(" "))
-        assertEquals(spellings.size, tokens.size)
-        assertTrue(tokens.all { it.first == AzoraTokenTypes.INT_LITERAL })
-        assertEquals(spellings, tokens.map { it.second })
+    fun `retired width suffixes are outside the literal`() {
+        assertEquals(
+            listOf("42", "uL", "3.0", "D", "0xFC"),
+            tokenizeFiltered("42uL 3.0D 0xFC").map { it.second },
+        )
+    }
+
+    @Test
+    fun `error declarations and keyword-spelled when-arm members use different styles`() {
+        val source = """
+            error Failure { Invalid }
+            fin tint = when studio.statusKind {
+                3 -> studioTheme.error
+                1 -> studioTheme?.error
+                2 -> Palette::error
+                else -> studioTheme./* context */error
+            }
+        """.trimIndent()
+        val highlighter = org.azora.lang.idea.highlighting.AzoraSyntaxHighlighter()
+        val styles = tokenizeFiltered(source).filter { it.second == "error" }
+            .map { highlighter.getTokenHighlights(it.first).single() }
+        assertEquals(org.azora.lang.idea.highlighting.AzoraSyntaxHighlighter.DECLARATION_KEYWORD, styles.first())
+        assertEquals(5, styles.size)
+        assertTrue(styles.drop(1).all { it == org.azora.lang.idea.highlighting.AzoraSyntaxHighlighter.IDENTIFIER })
     }
 
     // ── String and char literals ───────────────────────────────────────

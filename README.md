@@ -31,7 +31,7 @@
   declaration in your project, the SDK, or a dependency says so.
 - **Associated types are distinct.** Declarations such as `assoc Item` and every
   use of that associated type receive the dedicated teal semantic role from AZLS.
-- **Smart casts** are highlighted for the extent of the narrowing (`if x is T`, `guard … is T`, `when` arms).
+- **Smart casts** are highlighted for the extent of the narrowing (`if x is T` and `when` arms).
 
 ### Code intelligence
 
@@ -41,8 +41,8 @@
   all come from the same versioned AZLS source snapshot.
 - **Compiler-owned diagnostics** are underlined on their exact LSP ranges. Quick
   fixes are resolved and applied only when their document version still matches.
-- **AZLS runs out of process.** The plugin supervises `~/.azora/azls/azls.jar`,
-  so a language-server failure is isolated from Android Studio.
+- **AZLS runs out of process.** The plugin ships the compiler-matched AZLS and standard-library sources
+  for completion, diagnostics, and navigation.
 - **Structure view**, **folding**, **brace matching**, **commenting**, and **indentation**.
 
 ### Projects and running
@@ -56,11 +56,18 @@
 
 ## Requirements
 
-- [IntelliJ IDEA](https://www.jetbrains.com/idea/) 2025.3+ or [Android Studio](https://developer.android.com/studio) Meerkat+
+- [IntelliJ IDEA](https://www.jetbrains.com/idea/) 2025.3+ or [Android Studio](https://developer.android.com/studio) based on platform build 253 or later
 - [Azora SDK](https://azoralang.org) installed (for run configurations)
-- Azora language 0.0.5
+- Azora language 0.1
 
 ## Release notes
+
+### 0.1.0
+
+- Bundles AZLS and the standard library from the Azora 0.1 development branch.
+- Improves completion, auto-import edits, and navigation to declaration names.
+- Highlights keyword-spelled members such as `studioTheme.error` according to their use.
+- Uses the same indentation rules at Enter and during Reformat Code.
 
 ### 0.0.9
 
@@ -74,13 +81,16 @@
 ### From source
 
 ```bash
-git clone https://github.com/azora-tech/azora-idea-plugin.git
+git clone https://github.com/azoralabs/azora-lang.git
+git clone https://github.com/azoralabs/azora-idea-plugin.git
+git -C azora-lang checkout 568c55fc8c572b8bb88fb78e07d55d0a18e848eb
+(cd azora-lang && ./gradlew :azls:fatJar)
 cd azora-idea-plugin
 ./gradlew build
 ```
 
 The built plugin zip will be in `build/distributions/`. Install it via **Settings > Plugins > Install Plugin from Disk**.
-Install AZLS first at `~/.azora/azls/azls.jar` (the language repository provides `./gradlew :azls:installAzls`).
+Set `AZORA_COMPILER_DIR` to use a compiler checkout at another path.
 
 ## Getting Started
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.0
+
+- Bundle Azora 0.1 AZLS and its standard-library sources.
+- Highlight reserved words according to context, including `studioTheme.error`, and use the current literal syntax.
+- Improve member completion, auto-import edits, and Go to Declaration.
+- Share indentation rules between Enter and Reformat Code for multiline calls, branches, and nested blocks.
+
 ## 0.0.9
 
 - Colored decimal, hexadecimal, and binary integer literals with a balanced pastel-cyan palette in both light and dark themes; real literals keep their existing foreground.

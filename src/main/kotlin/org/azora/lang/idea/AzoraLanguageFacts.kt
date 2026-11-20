@@ -41,17 +41,13 @@ object AzoraLanguageFacts {
 
 
     /** The Azora language version this plugin's lexical model tracks. */
-    const val LANGUAGE_VERSION = "0.0.5"
+    const val LANGUAGE_VERSION = "0.1.0"
 
     /** Reserved declaration, binding, and namespace words in the compiler lexer. */
     val declarationKeywords = setOf(
         "var", "val", "let", "fin", "func", "pack", "enum", "variant", "impl", "spec", "typealias",
         "prop", "ctor", "dtor", "oper", "annot", "bind", "graph", "scope", "macro", "test",
         "error", "import", "module", "union",
-        // Reserved, with no grammar of its own yet: `using` has no meaning
-        // outside a macro name, and is a word set aside rather than a word
-        // spent. It reads as a keyword because that is what it is.
-        "using",
     )
 
     /** Reserved words that introduce expressions, control flow, or contracts. */
@@ -59,7 +55,7 @@ object AzoraLanguageFacts {
         "return", "if", "else", "for", "while", "loop", "in", "by", "then",
         "break", "continue", "when", "throw", "try", "catch", "rescue", "defer",
         "await", "delay", "as", "is", "with", "without", "assert", "trace", "panic",
-        "where", "derives", "includes", "binds", "requires", "assoc", "seal",
+        "where", "derives", "includes", "binds", "requires", "assoc", "seal", "using",
     )
 
     /**
@@ -71,7 +67,7 @@ object AzoraLanguageFacts {
      * are the same words in a position where a value is expected, which is why
      * the distinction is made by position and not by this list.
      */
-    val blockStatementHeads = setOf("if", "else", "for", "while", "loop", "when")
+    val blockStatementHeads = setOf("if", "else", "for", "while", "loop", "when", "using")
 
     /** Reserved words that alter declaration visibility or evaluation. */
     val modifierKeywords = setOf(
@@ -130,7 +126,7 @@ object AzoraLanguageFacts {
      * mind. The editor reads the same words the same way.
      */
     val hardKeywords = declarationKeywords + controlKeywords + modifierKeywords +
-        memoryKeywords + reactiveKeywords + literalKeywords
+        memoryKeywords + reactiveKeywords + literalKeywords + primitiveWords
 
     /**
      * The keywords the parser also accepts as a *name*.

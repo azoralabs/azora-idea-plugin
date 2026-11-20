@@ -436,6 +436,7 @@ class AzoraResolver(
             while (j > 0 && content[j - 1].isWhitespace()) j--
             val sep = when {
                 j >= 2 && content[j - 1] == ':' && content[j - 2] == ':' -> "::"
+                j >= 2 && content[j - 1] == '.' && content[j - 2] == '?' -> "?."
                 j >= 1 && content[j - 1] == '.' && !(j >= 2 && content[j - 2] == '.') -> "."
                 else -> null
             } ?: break

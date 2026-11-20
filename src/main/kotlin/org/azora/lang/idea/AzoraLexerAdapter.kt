@@ -253,10 +253,8 @@ class AzoraLexerAdapter : LexerBase() {
                 ch.isDigit() -> {
                     val start = pos
                     var isReal = false
-                    var isHex = false
                     if (ch == '0' && pos + 1 < len && (source[pos + 1] == 'x' || source[pos + 1] == 'X')) {
                         pos += 2
-                        isHex = true
                         while (pos < len && (source[pos].isDigit() || source[pos] in 'a'..'f' || source[pos] in 'A'..'F' || source[pos] == '_')) pos++
                     } else if (ch == '0' && pos + 1 < len && (source[pos + 1] == 'o' || source[pos + 1] == 'O')) {
                         pos += 2
@@ -290,23 +288,6 @@ class AzoraLexerAdapter : LexerBase() {
                         }
                     }
 
-                    // Canonical suffixes, in the compiler's maximal-munch order.
-                    if (pos < len && source[pos] == 'u') {
-                        val following = source.getOrNull(pos + 1)
-                        when {
-                            following == 's' -> pos += 2
-                            following == 'L' -> pos += 2
-                            !isHex && following == 'c' -> pos += 2
-                            !isHex && following == 'b' -> pos += 2
-                            following == null || !following.isLetterOrDigit() -> pos++
-                        }
-                    } else if (pos < len && source[pos] in "sLD" ||
-                        (!isHex && pos < len && source[pos] in "bcf")
-                    ) {
-                        if (source[pos] == 'f' || source[pos] == 'D') isReal = true
-                        pos++
-                    }
-
                     val type = if (isReal) AzoraTokenTypes.REAL_LITERAL else AzoraTokenTypes.INT_LITERAL
                     result.add(LexToken(type, start + startOffset, pos + startOffset))
                 }
@@ -338,7 +319,15 @@ class AzoraLexerAdapter : LexerBase() {
                         pos++
                     }
                     val word = source.substring(start, pos)
-                    result.add(LexToken(classifyWord(source, start, word), start + startOffset, pos + startOffset))
+                    val token = if (word in NAME_CAPABLE_KEYWORDS || word == "then") {
+                        val previous = result.lastOrNull { it.type !in AzoraTokenTypes.IGNORABLE }
+                        val member = previous != null &&
+                            source.substring(previous.start - startOffset, previous.end - startOffset) in MEMBER_SEPARATORS
+                        if (member) AzoraTokenTypes.IDENTIFIER else classifyWord(source, start, word)
+                    } else {
+                        classifyWord(source, start, word)
+                    }
+                    result.add(LexToken(token, start + startOffset, pos + startOffset))
                 }
 
                 // Multi-character operators (order matters, longest match first)
@@ -811,13 +800,6 @@ class AzoraLexerAdapter : LexerBase() {
      * followed by nothing but a name.
      */
     private fun classifyWord(source: String, start: Int, word: String): IElementType {
-        if (word == "then") {
-            var i = start - 1
-            while (i >= 0 && source[i].isWhitespace()) i--
-            val afterDot = i >= 0 && source[i] == '.' && (i == 0 || source[i - 1] != '.')
-            val afterScope = i >= 1 && source[i] == ':' && source[i - 1] == ':'
-            if (afterDot || afterScope) return AzoraTokenTypes.IDENTIFIER
-        }
         if (word in NAME_CAPABLE_KEYWORDS && isNamePosition(source, start, word)) {
             return AzoraTokenTypes.IDENTIFIER
         }
@@ -841,10 +823,6 @@ class AzoraLexerAdapter : LexerBase() {
     private fun isNamePosition(source: String, start: Int, word: String): Boolean {
         var i = start - 1
         while (i >= 0 && (source[i] == ' ' || source[i] == '\t')) i--
-        // `..` and `...` are range and spread operators, not member separators.
-        if (i >= 0 && source[i] == '.') return i < 1 || source[i - 1] != '.'
-        if (i >= 1 && source[i] == ':' && source[i - 1] == ':') return true
-
         // A declaration head only reaches the name on its own line: the word
         // opening the next line is a declaration of its own, not this one's
         // name. And a head reaches *past* any word that is itself part of a
@@ -947,6 +925,7 @@ class AzoraLexerAdapter : LexerBase() {
     }
 
     companion object {
+        private val MEMBER_SEPARATORS = setOf(".", "?.", "::")
 
         /** The one state a relex may start in: the top of the file. */
         private const val TOP_OF_FILE = 0

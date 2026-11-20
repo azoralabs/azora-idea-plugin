@@ -29,25 +29,30 @@ class AzoraSemanticAnnotator : Annotator {
             lspRange(document, diagnostic.range.start.line, diagnostic.range.start.character,
                 diagnostic.range.end.line, diagnostic.range.end.character)
         }
-        service.tokens(file, document).forEach { token ->
-            // Lexical colors remain the syntax highlighter's responsibility.
-            // Semantic tokens refine identifier roles and must not repaint a
-            // whole string/comment with a stale or partial semantic response.
-            if (token.type in LEXICAL_TYPES || token.line !in 0 until document.lineCount) return@forEach
-            val start = document.getLineStartOffset(token.line) + token.character
-            val end = (start + token.length).coerceAtMost(document.textLength)
-            val intersection = intersect(leaf, start, end) ?: return@forEach
-            // Compiler diagnostics own their underline/effect. Applying a
-            // semantic foreground key over the same range can cause IntelliJ
-            // to discard the diagnostic effect depending on annotator order.
-            // An unresolved name therefore keeps lexical styling until it is
-            // imported and the compiler stops reporting it.
-            if (diagnosticRanges.any { diagnostic -> overlaps(intersection, diagnostic) }) return@forEach
-            holder.newSilentAnnotation(HighlightSeverity.INFORMATION)
-                .range(intersection)
-                .textAttributes(key(token.type))
-                .create()
-        }
+        if (leaf.isEmpty || leaf.startOffset >= document.textLength) return
+        val firstLine = document.getLineNumber(leaf.startOffset)
+        val lastLine = document.getLineNumber((leaf.endOffset - 1).coerceAtMost(document.textLength))
+        (firstLine..lastLine).asSequence()
+            .flatMap { service.tokensAtLine(file, document, it) }
+            .forEach { token ->
+                // Lexical colors remain the syntax highlighter's responsibility.
+                // Semantic tokens refine identifier roles and must not repaint a
+                // whole string/comment with a stale or partial semantic response.
+                if (token.type in LEXICAL_TYPES || token.line !in 0 until document.lineCount) return@forEach
+                val start = document.getLineStartOffset(token.line) + token.character
+                val end = (start + token.length).coerceAtMost(document.textLength)
+                val intersection = intersect(leaf, start, end) ?: return@forEach
+                // Compiler diagnostics own their underline/effect. Applying a
+                // semantic foreground key over the same range can cause IntelliJ
+                // to discard the diagnostic effect depending on annotator order.
+                // An unresolved name therefore keeps lexical styling until it is
+                // imported and the compiler stops reporting it.
+                if (diagnosticRanges.any { diagnostic -> overlaps(intersection, diagnostic) }) return@forEach
+                holder.newSilentAnnotation(HighlightSeverity.INFORMATION)
+                    .range(intersection)
+                    .textAttributes(key(token.type))
+                    .create()
+            }
     }
 
     /** The part of one AZLS semantic span contained by this PSI leaf. */

@@ -1,11 +1,11 @@
 plugins {
     id("java")
-    kotlin("jvm") version "2.1.10"
+    kotlin("jvm") version "2.3.10"
     id("org.jetbrains.intellij.platform") version "2.13.1"
 }
 
 group = "org.azora.lang"
-version = "0.0.9"
+version = "0.1.0"
 
 repositories {
     mavenCentral()
@@ -21,14 +21,15 @@ dependencies {
         if (useLocalIde) {
             local("/Applications/Android Studio.app")
         } else {
-            intellijIdeaCommunity("2025.1")
+            intellijIdea("2025.3")
         }
         testFramework(org.jetbrains.intellij.platform.gradle.TestFrameworkType.Bundled)
     }
-    // Android Studio 2025.3 bundles LSP4J 0.21.2. Compile against that exact
-    // protocol API without packaging a duplicate runtime into the plugin.
-    compileOnly("org.eclipse.lsp4j:org.eclipse.lsp4j:0.21.2")
-    compileOnly("org.eclipse.lsp4j:org.eclipse.lsp4j.jsonrpc:0.21.2")
+    // Own the transport dependency on both IntelliJ IDEA and Android Studio.
+    implementation("org.eclipse.lsp4j:org.eclipse.lsp4j:0.21.2") {
+        // The IntelliJ platform supplies Gson.
+        exclude(group = "com.google.code.gson")
+    }
     testImplementation("org.junit.jupiter:junit-jupiter:5.11.4")
     testImplementation("junit:junit:4.13.2")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
@@ -51,13 +52,11 @@ intellijPlatform {
             sinceBuild = "253"
         }
         changeNotes = """
-            <p><b>AZLS process integration</b></p>
             <ul>
-                <li>The plugin now launches AZLS as an isolated external process and communicates over standard JSON-RPC/LSP.</li>
-                <li>Compiler-owned, versioned diagnostics and exact ranges replace the plugin's duplicate semantic analyzer.</li>
-                <li>Completion, hover, definition, semantic tokens, and version-checked quick fixes are served through the same AZLS snapshot.</li>
-                <li>Associated types such as <code>Iterator::Item</code> use their dedicated teal semantic role at declarations and use sites.</li>
-                <li>The server is restarted a bounded number of times after a crash and is shut down with the project.</li>
+                <li>Bundled Azora 0.1 compiler and language server for semantic editor features.</li>
+                <li>Updated syntax highlighting, including keyword-spelled members such as <code>theme.error</code>.</li>
+                <li>Context-aware completion, safe auto-import edits, and more precise declaration navigation.</li>
+                <li>Consistent Enter and Reformat Code indentation for multiline declarations, expressions, and nested blocks.</li>
             </ul>
         """.trimIndent()
     }
@@ -71,4 +70,28 @@ tasks {
     test {
         useJUnitPlatform()
     }
+}
+
+// Release CI builds this artifact from the pinned compiler checkout before Gradle runs.
+val compilerDir = file(providers.environmentVariable("AZORA_COMPILER_DIR").orElse("../azora-lang").get())
+val azlsJar = compilerDir.resolve("azls/build/libs/azls-all.jar")
+
+tasks.withType<org.jetbrains.intellij.platform.gradle.tasks.PrepareSandboxTask>().configureEach {
+    from(listOf(azlsJar, compilerDir.resolve("LICENSE"))) { into("${project.name}/azls") }
+    from(compilerDir.resolve("std")) {
+        include("**/*.az")
+        into("${project.name}/azls/std/src")
+    }
+    from("src/main/azls/package.azon") { into("${project.name}/azls/std") }
+}
+
+tasks.buildPlugin {
+    doFirst {
+        check(azlsJar.isFile) { "Build :azls:fatJar in $compilerDir before packaging Azora." }
+    }
+}
+
+tasks.test {
+    inputs.file(azlsJar)
+    systemProperty("azora.test.azlsJar", azlsJar.absolutePath)
 }

@@ -1,0 +1,20 @@
+name: Build the bundled Azora language server
+description: Build AZLS and select the matching standard library for the plugin.
+runs:
+  using: composite
+  steps:
+    - uses: actions/checkout@v4
+      with:
+        repository: azoralabs/azora-lang
+        ref: 568c55fc8c572b8bb88fb78e07d55d0a18e848eb
+        path: .azora-compiler
+        persist-credentials: false
+
+    - name: Build the language server
+      shell: bash
+      working-directory: .azora-compiler
+      run: ./gradlew :azls:fatJar --console=plain
+
+    - name: Select compiler artifacts for the plugin build
+      shell: bash
+      run: echo "AZORA_COMPILER_DIR=$GITHUB_WORKSPACE/.azora-compiler" >> "$GITHUB_ENV"

@@ -279,7 +279,7 @@ object AzoraSemanticModel {
         token.type == AzoraTokenTypes.IDENTIFIER || AzoraTokenTypes.KEYWORDS.contains(token.type)
 
     private fun isMemberSeparator(token: AzoraToken): Boolean =
-        token.type == AzoraTokenTypes.DOT || (token.type == AzoraTokenTypes.OPERATOR && token.text == "::")
+        token.type == AzoraTokenTypes.DOT || (token.type == AzoraTokenTypes.OPERATOR && token.text in setOf("::", "?."))
 
     private fun isAfterMemberSeparator(tokens: List<AzoraToken>, index: Int): Boolean =
         prevMeaningful(tokens, index, sameLine = true)?.let { isMemberSeparator(tokens[it]) } == true
@@ -347,21 +347,28 @@ object AzoraSemanticModel {
         semantics.functionByToken[index]?.let { return functionStyle(it.context) }
         semantics.propertyByToken[index]?.let { return propertyStyle(it.context) }
         if (semantics.fieldByToken.containsKey(index)) return AzoraSyntaxHighlighter.FIELD
+        val qualified = isAfterMemberSeparator(tokens, index)
+        if (qualified && next?.type == AzoraTokenTypes.L_BRACKET) {
+            val open = nextMeaningful(tokens, index, sameLine = true)!!
+            val close = matchingDelimiter(tokens, open, AzoraTokenTypes.L_BRACKET, AzoraTokenTypes.R_BRACKET)
+            val after = close?.let { nextMeaningful(tokens, it, sameLine = true) }
+            if (after != null && isOperator(tokens[after], "=")) return AzoraSyntaxHighlighter.FIELD
+        }
         // A receiver reads the same wherever it is written: naming it in the
         // body is naming the thing the call site supplied, not a local.
         if (semantics.contextParameterByToken.containsKey(index) ||
-            isContextParameterReference(tokens, index, semantics.contextParameters)
+            !qualified && isContextParameterReference(tokens, index, semantics.contextParameters)
         ) {
             return AzoraSyntaxHighlighter.CONTEXT_PARAMETER
         }
-        if (semantics.parameterByToken.containsKey(index) || token.text in IMPLICIT_PARAMETERS) {
+        if (semantics.parameterByToken.containsKey(index) || !qualified && token.text in IMPLICIT_PARAMETERS) {
             return AzoraSyntaxHighlighter.PARAMETER
         }
         if (semantics.variableByToken.containsKey(index)) return AzoraSyntaxHighlighter.IDENTIFIER
 
         // A local binding is a symbol in its own scope, even when its spelling
         // is also used by a top-level function or type elsewhere in the file.
-        if (isLocalBindingReference(tokens, index, semantics)) {
+        if (!qualified && isLocalBindingReference(tokens, index, semantics)) {
             return if (isParameterReference(tokens, index, semantics.parameters)) {
                 AzoraSyntaxHighlighter.PARAMETER
             } else {
@@ -408,7 +415,7 @@ object AzoraSemanticModel {
                 AzoraSyntaxHighlighter.FIELD
             }
         }
-        if (isParameterReference(tokens, index, semantics.parameters)) return AzoraSyntaxHighlighter.PARAMETER
+        if (!qualified && isParameterReference(tokens, index, semantics.parameters)) return AzoraSyntaxHighlighter.PARAMETER
 
         return null
     }
