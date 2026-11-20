@@ -48,6 +48,8 @@ internal class AzoraIndentation(
 
         val brackets = ArrayDeque<Bracket>()
         var continued = false
+        var previousExpressionWidth: Int? = null
+        var previousChainWidth: Int? = null
         for ((line, tokens) in code.withIndex()) {
             var leadingCloser: Bracket? = null
             var firstCode = 0
@@ -56,22 +58,32 @@ internal class AzoraIndentation(
                 firstCode++
             }
             val bodyWidth = brackets.lastOrNull()?.bodyWidth ?: 0
-            val width = leadingCloser?.lineWidth ?: (bodyWidth + if (continued) continuation else 0)
+            val chainWidth = previousExpressionWidth?.takeIf {
+                leadingCloser == null && !continued && startsMemberChain(code, line)
+            }?.let { previousChainWidth ?: it + continuation }
+            val width = leadingCloser?.lineWidth ?: chainWidth ?: (bodyWidth + if (continued) continuation else 0)
             widths[line] = width
             if (tokens.isEmpty()) continue
 
             val originalDepth = brackets.size
+            var lastCloser = leadingCloser
             for (token in tokens.drop(firstCode)) {
                 val close = CLOSER_BY_OPENER[token.type]
                 if (close != null && (token.type != Tokens.INTERPOLATION_START || token.text.length == 2)) {
                     val step = if (token.type == Tokens.L_BRACE) indent else continuation
-                    brackets.addLast(Bracket(close, width, width + step))
+                    brackets.addLast(Bracket(close, width, width + step, chainWidth))
                 } else if (token.type == brackets.lastOrNull()?.close) {
-                    brackets.removeLast()
+                    lastCloser = brackets.removeLast()
                 }
             }
-            val inSeparatedList = brackets.lastOrNull()?.close in setOf(Tokens.R_PAREN, Tokens.R_BRACKET)
-            continued = brackets.size <= originalDepth && continues(tokens, inSeparatedList)
+            val close = brackets.lastOrNull()?.close
+            continued = brackets.size <= originalDepth && continues(tokens, close == Tokens.R_PAREN || close == Tokens.R_BRACKET)
+            val last = tokens.last()
+            previousExpressionWidth = width.takeIf {
+                last.type in Tokens.OPERAND_ENDERS || last.type == Tokens.R_BRACE ||
+                    last.type == Tokens.INTERPOLATION_END || last.text == "null"
+            }
+            previousChainWidth = chainWidth ?: lastCloser?.takeIf { leadingCloser != null }?.chainWidth
         }
     }
 
@@ -97,8 +109,36 @@ internal class AzoraIndentation(
         }
     }
 
+    /** A leading selector continues the preceding expression. A dotted when pattern
+     * has its own arrow and stays at the arm's indentation. */
+    private fun startsMemberChain(lines: Array<out List<Token>>, line: Int): Boolean {
+        val tokens = lines[line]
+        if (tokens.firstOrNull()?.type != Tokens.DOT || tokens.getOrNull(1)?.text in BORROW_SIGILS) return false
+
+        // A variant payload may span multiple lines, so look for the arm's
+        // arrow at the pattern's own depth, beyond any payload delimiters.
+        var depth = 0
+        for (index in line..lines.lastIndex) {
+            for (token in lines[index]) {
+                when (token.type) {
+                    Tokens.L_PAREN, Tokens.L_BRACKET, Tokens.L_BRACE -> depth++
+                    Tokens.R_PAREN, Tokens.R_BRACKET, Tokens.R_BRACE -> depth--
+                    Tokens.ARROW -> if (depth == 0) return false
+                }
+                if (depth < 0) return true
+            }
+            if (depth == 0) return true
+        }
+        return true
+    }
+
     private data class Token(val type: IElementType, val text: String)
-    private data class Bracket(val close: IElementType, val lineWidth: Int, val bodyWidth: Int)
+    private data class Bracket(
+        val close: IElementType,
+        val lineWidth: Int,
+        val bodyWidth: Int,
+        val chainWidth: Int?,
+    )
 
     private companion object {
         val CLOSER_BY_OPENER = mapOf(
@@ -107,6 +147,7 @@ internal class AzoraIndentation(
             Tokens.L_BRACKET to Tokens.R_BRACKET,
             Tokens.INTERPOLATION_START to Tokens.INTERPOLATION_END,
         )
+        val BORROW_SIGILS = setOf("&", "!")
         val CLAUSES = setOf("then", "where", "derives", "includes", "binds", "requires")
         val OPERATORS = setOf(
             "=", "+", "-", "*", "/", "%", "&&", "||", "??", "&", "|", "^", "::", "?.",

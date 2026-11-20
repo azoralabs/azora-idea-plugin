@@ -1,7 +1,7 @@
 <idea-plugin>
     <id>org.azora.lang.idea</id>
     <name>Azora Language</name>
-    <version>0.1.0</version>
+    <version>0.1.1</version>
     <vendor email="support@azora.dev" url="https://azora.dev">AzoraLabs</vendor>
     <description><![CDATA[
         Full language support for the <b>Azora</b> programming language (0.1).
@@ -70,6 +70,9 @@
 
         <lineIndentProvider
             implementation="org.azora.lang.idea.formatting.AzoraLineIndentProvider"/>
+
+        <copyPastePostProcessor
+            implementation="org.azora.lang.idea.formatting.AzoraPasteIndentProcessor"/>
 
         <!-- Completion and templates -->
         <completion.contributor

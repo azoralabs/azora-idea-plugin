@@ -62,6 +62,11 @@
 
 ## Release notes
 
+### 0.1.1
+
+- Fix indentation when moving code with Cut and Paste.
+- Align multiline modifier chains in named arguments and `when` branches.
+
 ### 0.1.0
 
 - Bundles AZLS and the standard library from the Azora 0.1 development branch.

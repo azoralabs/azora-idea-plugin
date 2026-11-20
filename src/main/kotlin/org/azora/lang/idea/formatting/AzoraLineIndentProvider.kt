@@ -9,6 +9,7 @@ import com.intellij.application.options.CodeStyle
 import com.intellij.lang.Language
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.project.Project
+import com.intellij.psi.codeStyle.CommonCodeStyleSettings
 import com.intellij.psi.codeStyle.lineIndent.LineIndentProvider
 import org.azora.lang.idea.AzoraLanguage
 
@@ -21,8 +22,12 @@ class AzoraLineIndentProvider : LineIndentProvider {
         val line = document.getLineNumber(offset.coerceIn(0, document.textLength))
         val options = CodeStyle.getIndentOptions(project, document)
         val width = AzoraIndentation(document.immutableCharSequence, options, line).widthAtLine(line) ?: return null
-        if (!options.USE_TAB_CHARACTER) return " ".repeat(width)
-        val tabSize = options.TAB_SIZE.coerceAtLeast(1)
-        return "\t".repeat(width / tabSize) + " ".repeat(width % tabSize)
+        return azoraIndentText(width, options)
     }
+}
+
+internal fun azoraIndentText(width: Int, options: CommonCodeStyleSettings.IndentOptions): String {
+    if (!options.USE_TAB_CHARACTER) return " ".repeat(width)
+    val tabSize = options.TAB_SIZE.coerceAtLeast(1)
+    return "\t".repeat(width / tabSize) + " ".repeat(width % tabSize)
 }

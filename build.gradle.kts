@@ -5,7 +5,7 @@ plugins {
 }
 
 group = "org.azora.lang"
-version = "0.1.0"
+version = "0.1.1"
 
 repositories {
     mavenCentral()
@@ -53,10 +53,8 @@ intellijPlatform {
         }
         changeNotes = """
             <ul>
-                <li>Bundled Azora 0.1 compiler and language server for semantic editor features.</li>
-                <li>Updated syntax highlighting, including keyword-spelled members such as <code>theme.error</code>.</li>
-                <li>Context-aware completion, safe auto-import edits, and more precise declaration navigation.</li>
-                <li>Consistent Enter and Reformat Code indentation for multiline declarations, expressions, and nested blocks.</li>
+                <li>Fix block indentation when moving code with Cut and Paste, including selections that begin at the first token.</li>
+                <li>Indent multiline modifier chains inside named arguments and <code>when</code> branches.</li>
             </ul>
         """.trimIndent()
     }

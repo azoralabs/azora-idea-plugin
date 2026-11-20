@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.1
+
+- Preserve relative indentation, manual alignment, and raw string contents when moving code with Cut and Paste in Indent Block mode.
+- Indent multiline modifier chains inside calls and `when` branches, and keep variant patterns at the arm's indentation.
+
 ## 0.1.0
 
 - Bundle Azora 0.1 AZLS and its standard-library sources.
